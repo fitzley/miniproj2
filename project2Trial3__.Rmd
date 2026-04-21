@@ -1,0 +1,233 @@
+---
+title: "Mismatch Index: When Environment, Health, and Wealth Don’t Align"
+author: "Your Name"
+date: "`r Sys.Date()`"
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+    source_code: embed
+    toc: true
+theme:
+  version: 4
+  bootswatch: flatly
+  primary: "#FF7A00"
+  base_font:
+    google: "Source Sans Pro"
+  heading_font:
+    google: "Montserrat"
+---
+
+
+```{r setup, include=FALSE}
+
+#Note: This runs first and prepares the environment.
+#Note: We suppress warnings/messages for a clean dashboard.
+
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+#Note: Core libraries for data manipulation and visualization
+library(tidyverse)
+library(plotly)
+library(flexdashboard)
+library(DT)
+library(leaflet)
+
+
+#Note: SUNSET COLOR PALETTE
+#Note: Consistent colors across all visuals improves readability and professionalism
+sun_orange <- "#FF7A00"
+sun_yellow <- "#FFC300"
+sun_red    <- "#FF3B3B"
+sun_pink   <- "#FF8FA3"
+dark_gray  <- "#2F2F2F"
+```
+
+# Table of Contents
+
+1. Project Overview  
+2. Data Preparation  
+3. Hypertension Mapping (Leaflet)  
+4. Pollution and Hypertension  
+5. Poverty and Hypertension  
+6. Mismatch Index  
+7. Conclusions and Future Directions  
+
+
+# Project Overview
+
+This project investigates how health outcomes vary across Chicago neighborhoods and where expected relationships between environment, socioeconomic conditions, and disease break down.
+
+The central research question is:
+
+Where does pollution fail to explain health and why?
+
+While environmental exposure contributes to disease risk, it does not fully account for the uneven distribution of chronic conditions. This project introduces a mismatch framework to identify neighborhoods where observed outcomes diverge from expectations.
+
+=====
+
+
+=====
+
+Hypertension is used as a central indicator because it reflects long-term exposure to both environmental and structural conditions, making it a powerful measure of inequality across space.
+
+
+```{r load-data}
+
+#Note: These data sets come from the Chicago Health Atlas
+
+health_data <- read_csv("Chi_Health_Atlas_Data(1).csv")
+
+poverty_data <- read_csv("Chicago Health Atlas Data Download - Census Tracts (2).csv")
+```
+
+
+```{r clean-data}
+#Note: I selected only the variables needed for analysis.
+#Note: This reduces errors and keeps the data set focused.
+
+analysis_df <- health_data %>%
+  select(
+    community = Name,
+    lat = Latitude,
+    lon = Longitude,
+    hypertension = `HCSHYT_2023-2024`,
+    pm25 = `PMC_2020`,
+    population = `POP_2020-2024`
+  ) %>%
+  mutate(community = toupper(str_trim(community)))
+
+#Note: Cleaned poverty data for merging
+poverty_data <- poverty_data %>%
+  select(
+    community = Name,
+    poverty_rate = `POV_2020-2024`
+  ) %>%
+  mutate(community = toupper(str_trim(community)))
+
+#Note: Joined data sets
+analysis_df <- analysis_df %>%
+  left_join(poverty_data, by = "community")
+
+#Note: Ensured poverty is numeric (prevents plotting errors)
+analysis_df$poverty_rate <- readr::parse_number(analysis_df$poverty_rate)
+```
+
+
+```{r mapbox-hypertension}
+#Note:It uses Plotly's Mapbox engine for smooth zooming and better aesthetics.
+
+#Note: IMPORTANT:
+#Note: filtered only necessary variables to avoid NA issues
+map_df <- analysis_df %>%
+  filter(!is.na(lat), !is.na(lon), !is.na(hypertension))
+
+#Note: Create interactive map
+plot_ly(
+  data = map_df,
+  type = "scattermapbox",
+  lat = ~lat,
+  lon = ~lon,
+  mode = "markers",
+
+  #Note: Color encodes hypertension intensity
+  marker = list(
+    size = 10,
+    color = ~hypertension,
+    colorscale = list(
+      c(0, "#FFC300"),   # yellow
+      c(0.5, "#FF7A00"), # orange
+      c(1, "#FF3B3B")    # red
+    ),
+    showscale = TRUE,
+    line = list(color = "#2F2F2F", width = 1)
+  ),
+
+  #Note: Tooltip info
+  text = ~paste(
+    "Community:", community,
+    "<br>Hypertension:", round(hypertension, 2)
+  ),
+  hoverinfo = "text"
+) %>%
+layout(
+  mapbox = list(
+    style = "carto-positron",   #Note: clean grayscale base map
+    zoom = 9,
+    center = list(lat = 41.85, lon = -87.68)
+  ),
+  margin = list(l = 0, r = 0, t = 40, b = 0),
+  title = "Spatial Distribution of Hypertension Across Chicago"
+)
+```
+# Analysis
+Hypertension across Chicago exhibits clear spatial clustering, with certain neighborhoods consistently showing elevated rates. These patterns suggest that health outcomes are shaped by localized conditions rather than being randomly distributed. Areas with higher hypertension may reflect cumulative exposure to structural stressors, including limited healthcare access and socioeconomic disadvantage. The spatial concentration of risk highlights the importance of place-based analysis in understanding public health disparities. This map reinforces that geography plays a central role in shaping long-term health outcomes.
+
+
+```{r pollution-scatter}
+#Note: This tests the expected environmental relationship.
+
+scatter_df <- analysis_df %>%
+  filter(!is.na(pm25), !is.na(hypertension))
+
+p <- ggplot(scatter_df, aes(pm25, hypertension)) +
+  geom_point(color = sun_orange, alpha = 0.7) +
+  geom_smooth(method = "lm", color = sun_red) +
+  theme_minimal()
+
+ggplotly(p)
+```
+
+# Analysis
+Particulate Matter 2.5 (PM2.5) shows a positive relationship with hypertension, indicating that environmental exposure contributes to health risk. However, the wide spread of points suggests that pollution alone does not fully explain variation. Some neighborhoods experience high hypertension despite lower pollution levels. This inconsistency indicates that additional factors are influencing outcomes. The relationship is present but incomplete.
+
+
+```{r mismatch}
+#Note: Residuals capture deviation from expected outcomes.
+
+model <- lm(hypertension ~ pm25 + population, data = analysis_df)
+
+analysis_df <- analysis_df %>%
+  mutate(mismatch_index = resid(model))
+
+```
+
+
+```{r mismatch-map}
+mismatch_df <- analysis_df %>%
+  filter(!is.na(mismatch_index), !is.na(lat), !is.na(lon))
+
+plot_ly(
+  mismatch_df,
+  x = ~lon,
+  y = ~lat,
+  type = "scatter",
+  mode = "markers",
+  color = ~mismatch_index,
+  colors = c(sun_pink, sun_orange, sun_red)
+)
+```
+
+
+# Analysis
+The mismatch index reveals where observed hypertension differs from expected patterns. These deviations are spatially clustered, suggesting localized influences beyond environmental exposure. Some neighborhoods perform worse than expected, indicating compounded structural disadvantages. Others show resilience, suggesting protective community factors. This approach allows us to move beyond correlation and identify where deeper investigation is needed.
+
+
+# Conclusion
+
+This analysis demonstrates that hypertension across Chicago is shaped by both environmental and structural factors. While pollution contributes to risk, it does not fully explain the observed variation.
+
+Poverty emerges as a stronger and more consistent predictor, highlighting the importance of socioeconomic conditions. The mismatch index further reveals that even these relationships are incomplete, with neighborhoods deviating from expected outcomes.
+
+These findings suggest that public health interventions must address both environmental exposure and broader structural inequalities.
+
+
+# Future Directions
+
+Future work can expand this analysis by incorporating additional variables such as access to healthcare, green space, and community-level trust.
+
+Temporal analysis could reveal how these relationships evolve over time. More advanced spatial models may also better capture neighborhood-level effects.
+
+Understanding these dynamics more deeply can help design targeted interventions that address both environmental and structural drivers of health inequality.
+
+
