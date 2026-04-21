@@ -1,0 +1,563 @@
+---
+title: "Mismatch Index: When Environment, Health, and Wealth Don't Align"
+author: "Mini Project 2"
+date: "`r Sys.Date()`"
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+    source_code: embed
+    theme:
+      version: 4
+      bootswatch: flatly
+      primary: "#00CED1"
+      base_font:
+        google: "Source Sans Pro"
+      heading_font:
+        google: "Montserrat"
+---
+
+```{css}
+/* I am putting this chunk here in case I need to create a functional knitr::kable() table */
+.chart-wrapper {
+  overflow-y: auto;
+}
+```
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+# load packages
+library(tidyverse)
+library(plotly)
+library(flexdashboard)
+library(DT)
+library(sf)
+library(ggplot2)
+library(dplyr)
+library(plotly)
+library(ggcorrplot)
+
+# load data
+url <- "https://raw.githubusercontent.com/fitzley/miniproj2/refs/heads/main/health_data.csv"
+health_data <- read.csv(url)
+chicago_sf <- st_read("https://raw.githubusercontent.com/fitzley/miniproj2/refs/heads/main/chi_comm_areas.geojson", quiet = TRUE)
+#left-join map data to health data
+chicago_map <- chicago_sf %>%
+  left_join(health_data %>% mutate(GEOID = as.character(GEOID)), by = c("area_numbe" = "GEOID"))
+
+# grab the hardship index from most recent census data from github repository
+url2 <- "https://raw.githubusercontent.com/fitzley/miniproj2/refs/heads/main/h_index.csv"
+h_index <- read.csv(url2) %>%
+  slice(-1, )
+# left join hardship index from most recent census data
+chicago_map <- chicago_map %>%
+  left_join(h_index %>% select(GEOID, `HDX_2020.2024`) %>% mutate(GEOID = as.character(GEOID), `HDX_2020.2024` = as.numeric(`HDX_2020.2024`)), by = c("area_numbe" = "GEOID"))
+
+
+# translate count data into rates for each disease
+chicago_map <- chicago_map %>%
+  mutate(
+    diabetes_rate = HCSDIA_2023.2024 / Population * 100,
+    obesity_rate = HCSOB_2023.2024 / Population * 100,
+    hypertension_rate = HCSHYT_2023.2024 / Population * 100,
+    asthma_rate = HCSATH_2023.2024 / Population * 100,
+    hard_index = HDX_2020.2024
+  )
+```
+
+## Row {data-height="450"}
+
+### Disease Burden by Community Area
+
+```{r disease maps, echo=FALSE, out.width="100%", results='asis'}
+make_map <- function(var, title) {
+  ggplot(chicago_map) +
+    geom_sf(aes(fill = .data[[var]],
+                text = paste0("<b>", community, "</b><br>",
+                              title, ": ", round(.data[[var]], 1), "%"))) +
+    scale_fill_viridis_c(option = "viridis", na.value = "grey80", name = "% adults") +
+    theme_void() +
+    theme(legend.position = "none")
+}
+
+pd <- make_map("diabetes_rate", "Diabetes")
+po <- make_map("obesity_rate", "Obesity")
+ph <- make_map("hypertension_rate", "Hypertension")
+pa <- make_map("asthma_rate", "Asthma")
+
+pd2 <- ggplotly(pd, tooltip = "text") %>% layout(autosize = TRUE)
+po2 <- ggplotly(po, tooltip = "text") %>% layout(autosize = TRUE)
+ph2 <- ggplotly(ph, tooltip = "text") %>% layout(autosize = TRUE)
+pa2 <- ggplotly(pa, tooltip = "text") %>% layout(autosize = TRUE)
+
+
+#titles are broken, so create a text line instead:
+cat("<h4 style='text-align:center'>Diabetes &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Obesity &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Hypertension &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Asthma</h4>")
+subplot(pd2, po2, ph2, pa2, nrows = 1) %>%
+  # attempt to fix the table width
+  layout(autosize = TRUE) %>%
+  # hide the plotly tool bar
+  config(displayModeBar = FALSE)
+```
+
+## Row {data-height="120"}
+
+### Mean Diabetes Rate
+
+```{r}
+valueBox(
+  value = paste0(round(mean(chicago_map$diabetes_rate, na.rm = TRUE), 1), "%"),
+  caption = "Mean Diabetes Rate",
+  icon = "fa-droplet",
+  color = "primary"
+)
+```
+
+### Mean Obesity Rate
+
+```{r}
+valueBox(
+  value = paste0(round(mean(chicago_map$obesity_rate, na.rm = TRUE), 1), "%"),
+  caption = "Mean Obesity Rate",
+  icon = "fa-weight-hanging",
+  color = "primary"
+)
+```
+
+### Mean Hypertension Rate
+
+```{r}
+valueBox(
+  value = paste0(round(mean(chicago_map$hypertension_rate, na.rm = TRUE), 1), "%"),
+  caption = "Mean Hypertension Rate",
+  icon = "fa-heart-pulse",
+  color = "primary"
+)
+```
+
+### Mean Asthma Rate
+
+```{r}
+valueBox(
+  value = paste0(round(mean(chicago_map$asthma_rate, na.rm = TRUE), 1), "%"),
+  caption = "Mean Asthma Rate",
+  icon = "fa-lungs",
+  color = "primary"
+)
+```
+
+## Row {data-height="600"}
+
+### Summary Table of Disease Burden
+
+```{r top diabetes neighborhoods}
+chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(diabetes_rate)) %>%
+  arrange(desc(diabetes_rate)) %>%
+  select(Community = community, Diabetes = diabetes_rate, Obesity = obesity_rate, Hypertension = hypertension_rate, Asthma = asthma_rate) %>%
+  mutate(across(where(is.numeric), ~round(., 1))) %>%
+  DT::datatable(options = list(
+  pageLength = 67,
+  dom = 't',
+  scrollY = "450px",
+  scrollCollapse = TRUE
+))
+```
+
+### Correlation Matrix
+
+```{r corr plot}
+cor_data <- chicago_map %>%
+  st_drop_geometry() %>%
+  select(
+    Diabetes = diabetes_rate,
+    Obesity = obesity_rate,
+    Hypertension = hypertension_rate,
+    Asthma = asthma_rate,
+    Pct_White = PCT.W_2020.2024,
+    Air_Quality = CHASBQJ_2023.2024,
+    Traffic_Risk = TRF_2020,
+    Env_Justice = CHAKNKC_2023,
+    Hardship = hard_index
+  ) %>%
+  drop_na()
+
+cor_matrix <- cor(cor_data)
+
+p_cor <- ggcorrplot(cor_matrix,
+           method = "circle",
+           type = "lower",
+           lab = FALSE,
+           lab_size = 3,
+           colors = c("darkslategray", "whitesmoke", "red2"),
+           title = "Correlation Matrix: Diabetes and Related Variables") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplotly(p_cor) %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+## Row {data-height="120"}
+
+### Highest Diabetes Burden
+
+```{r}
+top_diabetes <- chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(diabetes_rate)) %>%
+  slice_max(diabetes_rate, n = 1)
+
+valueBox(
+  value = paste0(round(top_diabetes$diabetes_rate, 1), "%"),
+  caption = paste0("Highest Diabetes — ", top_diabetes$community),
+  icon = "fa-location-dot",
+  color = "danger"
+)
+```
+
+### Highest Obesity Burden
+
+```{r}
+top_obesity <- chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(obesity_rate)) %>%
+  slice_max(obesity_rate, n = 1)
+
+valueBox(
+  value = paste0(round(top_obesity$obesity_rate, 1), "%"),
+  caption = paste0("Highest Obesity — ", top_obesity$community),
+  icon = "fa-location-dot",
+  color = "danger"
+)
+```
+
+### Highest Hypertension Burden
+
+```{r}
+top_hypertension <- chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(hypertension_rate)) %>%
+  slice_max(hypertension_rate, n = 1)
+
+valueBox(
+  value = paste0(round(top_hypertension$hypertension_rate, 1), "%"),
+  caption = paste0("Highest Hypertension — ", top_hypertension$community),
+  icon = "fa-location-dot",
+  color = "danger"
+)
+```
+
+### Highest Asthma Burden
+
+```{r}
+top_asthma <- chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(asthma_rate)) %>%
+  slice_max(asthma_rate, n = 1)
+
+valueBox(
+  value = paste0(round(top_asthma$asthma_rate, 1), "%"),
+  caption = paste0("Highest Asthma — ", top_asthma$community),
+  icon = "fa-location-dot",
+  color = "danger"
+)
+```
+
+## Row
+
+### Diabetes Mismatch Index
+
+```{r diabetes mismatch, echo=FALSE}
+
+model_final <- lm(diabetes_rate ~ hard_index, data = chicago_map)
+# if you get a mismatch error, add:
+# chicago_map$residual <- NA
+chicago_map$residual[as.numeric(rownames(model_final$model))] <- residuals(model_final)
+
+
+chicago_map <- chicago_map %>%
+  mutate(
+    tooltip_text = paste0(
+      "<b>", community, "</b><br>",
+      "Diabetes Rate: ", round(diabetes_rate, 1), "%<br>",
+      "Predicted: ", round(diabetes_rate - residual, 1), "%<br>",
+      "Residual: ", round(residual, 1)
+    )
+  )
+
+diabetes_resid <- ggplot(chicago_map) +
+  geom_sf(aes(fill = residual, text = tooltip_text)) +
+  scale_fill_gradient2(
+    low = "darkslategray", mid = "whitesmoke", high = "red2",
+    midpoint = 0, name = "Residual"
+  ) +
+  theme_minimal() +
+  labs(title = "Diabetes Mismatch Index",
+       subtitle = "Dark gray = worse than expected | Red = better than expected")
+
+ggplotly(diabetes_resid, tooltip = "text") %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+## Row {data-height="120"}
+
+### Community Areas Analyzed
+
+```{r}
+n_areas <- sum(!is.na(chicago_map$diabetes_rate))
+valueBox(
+  value = n_areas,
+  caption = "Community Areas Analyzed",
+  icon = "fa-map-marker",
+  color = "info"
+)
+```
+
+### Mean Diabetes Rate
+
+```{r}
+mean_rate <- round(mean(chicago_map$diabetes_rate, na.rm = TRUE), 1)
+valueBox(
+  value = paste0(mean_rate, " per 1,000"),
+  caption = "Mean Diabetes Rate",
+  icon = "fa-heartbeat",
+  color = "primary"
+)
+```
+
+### Most Vulnerable Neighborhood
+
+```{r}
+most_vulnerable <- chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(residual), !is.na(diabetes_rate)) %>%
+  slice_max(residual, n = 1) %>%
+  pull(community)
+valueBox(
+  value = most_vulnerable,
+  caption = "Highest Mismatch (Vulnerable)",
+  icon = "fa-arrow-up",
+  color = "danger"
+)
+```
+
+### Most Resilient Neighborhood
+
+```{r}
+most_resilient <- chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(residual), !is.na(diabetes_rate)) %>%
+  slice_min(residual, n = 1) %>%
+  pull(community)
+valueBox(
+  value = most_resilient,
+  caption = "Highest Mismatch (Resilient)",
+  icon = "fa-arrow-down",
+  color = "success"
+)
+```
+
+## Row
+
+```{r}
+# boxplot_summary <- tibble::tibble(
+#   Species = c("Gentoo", "Chinstrap", "Adelie", "All species"),
+#   Flipper_Length_Pattern = c(
+#     "Longest flippers with relatively tight spread",
+#     "Intermediate flipper lengths",
+#     "Shortest flippers overall",
+#     "Distinct medians and distributions"
+#   ),
+#   Biological_Interpretation = c(
+#     "Matches their larger body size and strong swimming ability",
+#     "Consistent with their mid-sized morphology",
+#     "Reflects their smaller body size and different foraging style",
+#     "Shows flipper length is a strong species-level separator"
+#   ),
+#   Why_This_Plot_Matters = c(
+#     "Boxplot makes species differences obvious",
+#     "Raw points show full range, not just the median",
+#     "Confirms the size gradient seen in the scatterplot",
+#     "Adds clarity that the scatterplot alone cannot provide"
+#   )
+# )
+# 
+# DT::datatable(
+#   boxplot_summary,
+#   rownames = FALSE,
+#   options = list(pageLength = 5, autoWidth = TRUE, dom = "tip")
+# )
+
+```
+
+## Row
+
+### Assignment overview
+
+Complete this dashboard by fixing the broken sections, improving the design, and making each interactive element biologically meaningful. Your final knitted HTML should read like a coherent biological story rather than a pile of widgets.
+
+### Design guidance
+
+Use the readings to guide both structure and aesthetics. Do not add interaction just because you can. Explain what each panel contributes to the biological question.
+
+## Row
+
+### Research Questions
+
+How does this this and that explain this this and that?
+
+### Design plan
+
+The dashboard uses a restrained blue-centered theme so the species colors inside the plots remain the main data signal. The viewer should notice the summary indicators first, then move into the scatterplot for multivariable inspection, and then use the comparison plot and summary table to confirm species-level differences. Interactivity matters because it should help the viewer inspect overlapping observations and compare distributions more precisely than a static figure alone.
+
+### Student tasks
+
+1.  Fix the broken value box code so the dashboard renders cleanly.
+2.  Make sure both interactive plots work and use biologically meaningful hover text.
+3.  Write concise interpretations that explain what each panel adds.
+4.  Keep the final dashboard visually clean. Do not overload it with color, text, or interaction.
+
+## Row {data-height="120"}
+
+### Community Areas Analyzed
+
+```{r}
+n_areas <- sum(!is.na(chicago_map$diabetes_rate))
+valueBox(
+  value = n_areas,
+  caption = "Community Areas Analyzed",
+  icon = "fa-map-marker",
+  color = "info"
+)
+```
+
+### Mean Diabetes Rate
+
+```{r}
+mean_rate <- round(mean(chicago_map$diabetes_rate, na.rm = TRUE), 1)
+valueBox(
+  value = paste0(mean_rate, " per 1,000"),
+  caption = "Mean Diabetes Rate",
+  icon = "fa-heartbeat",
+  color = "primary"
+)
+```
+
+### Most Vulnerable Neighborhood
+
+```{r}
+most_vulnerable <- chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(residual), !is.na(diabetes_rate)) %>%
+  slice_max(residual, n = 1) %>%
+  pull(community)
+valueBox(
+  value = most_vulnerable,
+  caption = "Highest Mismatch (Vulnerable)",
+  icon = "fa-arrow-up",
+  color = "danger"
+)
+```
+
+### Most Resilient Neighborhood
+
+```{r}
+most_resilient <- chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(residual), !is.na(diabetes_rate)) %>%
+  slice_min(residual, n = 1) %>%
+  pull(community)
+valueBox(
+  value = most_resilient,
+  caption = "Highest Mismatch (Resilient)",
+  icon = "fa-arrow-down",
+  color = "success"
+)
+```
+
+## Row {data-height="360"}
+
+### Interactive plot 1: scatterplot
+
+```{r}
+#species_cols <- c(Adelie = "#F8766D", Chinstrap = "#00BA38", Gentoo = "#619CFF")
+
+# plot_ly(
+#   data = penguins_clean,
+#   x = ~bill_length_mm,
+#   y = ~body_mass_g,
+#   color = ~species,
+#   colors = species_cols,
+#   type = "scatter",
+#   mode = "markers",
+#   hovertext = ~hover_label,
+#   hoverinfo = "text",
+#   marker = list(size = 10, opacity = 0.75)
+# ) |>
+#   layout(
+#     title = list(text = "Body mass and bill length separate species, but with overlap", x = 0),
+#     xaxis = list(title = "Bill length (mm)"),
+#     yaxis = list(title = "Body mass (g)"),
+#     legend = list(orientation = "h", x = 0, y = -0.25),
+#     margin = list(l = 70, r = 20, b = 70, t = 60)
+#   )
+```
+
+### Interpretation 1
+
+The scatterplot above shows how bill length and body mass vary across the three penguin species, the Adelie, Chinstrap, and Gentoo. Gentoo penguins clearly stand out as the heaviest and longest‑billed, while Adelie penguins cluster at the smaller end of both traits. Chinstraps fall in between but still overlap with the other species. Being able to hover over individual points makes it easier to see which islands and sexes contribute to the overlap, something that’s harder to pick apart in a static figure. Zooming also helps reveal the structure inside each species cluster instead of everything blending together.
+
+## Row {data-height="360"}
+
+### Interactive plot 2: comparison plot
+
+```{r}
+# species_cols <- c(Adelie = "#F8766D", Chinstrap = "#00BA38", Gentoo = "#619CFF")
+
+# plotly example plot_ly(
+#  data = penguins_clean,
+#  x = ~species,
+#  y = ~flipper_length_mm,
+#  color = ~species,
+#  colors = species_cols,
+#  type = "box",
+#  jitter = 0.2,
+#  pointpos = 0,
+#  hovertext = ~paste0(
+#    "Species: ", species,
+#    "<br>Island: ", island,
+#    "<br>Sex: ", sex,
+#    "<br>Flipper length: ", flipper_length_mm, " mm"
+#  ),
+#  hoverinfo = "text",
+#  marker = list(size = 6, opacity = 0.55)
+#) |>
+#  layout(
+#    title = list(text = "Flipper length differs strongly by species", x = 0),
+#    xaxis = list(title = "Species"),
+#    yaxis = list(title = "Flipper length (mm)"),
+#    showlegend = FALSE,
+#    margin = list(l = 70, r = 20, b = 60, t = 60)
+#  )
+```
+
+### Interpretation 2
+
+The boxplot above highlights species differences in flipper length more directly than the scatterplot. While the scatterplot mixes multiple traits at once, this panel isolates a single measurement so it’s easier to compare the groups side‑by‑side. Gentoo penguins again show the largest values, and Adelies the smallest, with Chinstraps in the middle. Including the raw points helps show the spread within each species rather than just the summary statistics. This plot belongs in the dashboard because it confirms the patterns hinted at in the scatterplot and gives a clearer sense of how distinct the species are in this particular trait.
+
+## Row {data-height="240"}
+
+### Summary table
+
+```{r}
+# code here
+```
+
+### Submission reminder
+
+Submit the knitted HTML dashboard to Blackboard.
