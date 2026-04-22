@@ -1,0 +1,343 @@
+---
+title: "BIOS333Project"
+output: html_document
+---
+
+```{r} 
+library(tidyverse)
+library(janitor)
+
+#Note: Loaded data.
+health_data <- read_csv("Chi_Health_Atlas_Data.csv") %>%
+  clean_names()
+
+#Note: Filtered through the only columns we needed."Name" includes the name of each neighborhood, "HCSATH_2023-2024" showcases the asthma and burden outcomes for each neighborhood, this data set will be used to showcase real health outcomes. "HCSATH_2023-2024" showcases the environmental burden caused by traffic which is used as a predictor of pollution to show expected health outcomes.
+asthma_plot <- health_data %>%
+  select(
+    name,
+    asthma = hcsath_2023_2024,
+    pollution = trf_2020
+  )
+``` 
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(leaflet)
+library(readr)
+library(scales)
+
+#Note: Loaded data and cleaned it.
+health_data <- read_csv("Chi_Health_Atlas_Data.csv") %>%
+  clean_names()
+
+#Note: Included the variables needed for the map.
+map_data <- health_data %>%
+  select(
+    name,
+    latitude,
+    longitude,
+    asthma = hcsath_2023_2024,
+    pollution = trf_2020
+  ) %>%
+  drop_na()
+
+#Note: Created a green palette with various hues based on asthma prevalence, including my color choice for the project. 
+pal <- colorNumeric(
+  palette = c("#e8f5e9", "#a5d6a7", "#43a047", "#1b5e20"),
+  domain = map_data$asthma
+)
+
+#Note: Built interactive asthma distribution plot using the map of Illinois and surrounding areas, making 72 Chicago neighborhoods interactive.
+leaflet(map_data) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  #Note: Added grey background to emphasize neighborhoods, added neighborhood markers as well as longitude and latitude to map points to their correct location.
+  addCircleMarkers(
+    lng = ~longitude,
+    lat = ~latitude,
+    #Note: Used scale and gradience to ensure neighborhoods with larger/darker concentrations of of asthma would have larger interactive circles.
+    radius = ~rescale(asthma, to = c(6, 18)),
+    fillColor = ~pal(asthma),
+    #Note: Customized the circles color, weight and stroke.
+    fillOpacity = 0.9,
+    color = "black",
+    weight = 1,
+    stroke = TRUE,
+    #Note: Groups markers/circles together when zooming out and separate when zooming in. The legend also matches the color palette from above and matches data set.
+     clusterOptions = markerClusterOptions(),
+    popup = ~paste0(
+      "<b>", name, "</b><br>",
+      "Asthma prevalence: ", round(asthma, 2), "<br>",
+      "Traffic pollution: ", round(pollution, 2)
+    )
+  ) %>%
+  addLegend(
+    "bottomright",
+    pal = pal,
+    values = ~asthma,
+    title = "Asthma prevalence",
+    opacity = 0.9
+  )
+```
+**The leaflet map sets the baseline data that shows where asthma is distributed in the city. This map is interactive and represents the prevalence of asthma in 72 Chicago neighborhoods. Asthma concentration is represented in large yellow circles which decrease in size and gradience from dark green (greater concentrations) to light green (lower concentrations). Viewers can zoom into specific neighborhoods and hover over them to reveal neighborhood name, asthma prevalence and traffic pollution levels. This map helps us identify spatial distribution of asthma throughout the city. It also helps us identify weather there is a correlation among pollution and asthma for specific neighborhoods. The map shows us asthma levels have a relatively even distribution in the city of Chicago with some higher concentrations closer to the northeast side such as Lakeview and Albany Park. However, there is no clear relationship between traffic pollution and asthma prevelance as these factors vary throughout neighborhoods.  
+
+
+
+
+```{r, fig.height=20, fig.width=12}
+
+
+library(tidyverse)
+library(plotly)
+
+#Note: loaded the data into R.
+health_data <- read_csv("Chi_Health_Atlas_Data.csv")
+
+# Note: Filtered the data set to only the necessary columns, I renamed the asthma and pollution variables to create simpler names and I removed neighborhoods missing asthma or pollution data using "drop_na".
+asthma_plot <- health_data %>%
+  select(
+    Name,
+    asthma = `HCSATH_2023-2024`,
+    pollution = TRF_2020
+  ) %>%
+  drop_na()
+
+# Note: Created a linear model that predicts asthma from pollution based on the traffic burden, predicting what asthma should look like. Created a custom string for each plot point in order to incorporate interactivity, used tooltip in order to display data when hovering.
+mismatch_model <- lm(asthma ~ pollution, data = asthma_plot)
+
+asthma_plot <- asthma_plot %>%
+  mutate(
+    expected_asthma = predict(mismatch_model),
+    mismatch = asthma - expected_asthma,
+    category = case_when(
+      mismatch > 0 ~ "More vulnerable than expected",
+      mismatch < 0 ~ "More resilient than expected",
+      TRUE ~ "About as expected"
+    )
+  ) %>%
+  arrange(mismatch) %>%
+  mutate(
+    Name = factor(Name, levels = Name),
+    hover_text = paste(
+      "Neighborhood:", Name,
+      "<br>Asthma:", round(asthma, 2),
+      "<br>Expected asthma:", round(expected_asthma, 2),
+      "<br>Mismatch:", round(mismatch, 2),
+      "<br>Traffic burden:", round(pollution, 2),
+      "<br>Category:", category
+    )
+  )
+
+#Note: Created the graph, making x=mismatch value and y=neighborhood name, the fill showcases the resilience/vulnerability category.
+p <- ggplot(asthma_plot, aes(x = mismatch, y = Name, fill = category, text = hover_text)) +
+  
+  # Note: Created horizontal bars for each neighborhood and made thinner bars in order to reduce crowding.
+  geom_col(width = 0.5) +
+  
+  # Note: Added a vertical dashed line at 0 to separate higher than expected from lower than expected.
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.7, color = "black") +
+  
+  # Note: Included points based on pollution burden to see the amount of traffic burden in each neighborhood.
+  geom_point(aes(size = pollution, text = hover_text), color = "black", alpha = 0.65) +
+  
+  # Note: Added white space to prevent crowding on the x-axis bars.
+  scale_x_continuous(expand = expansion(mult = c(0.08, 0.12))) +
+  
+  # Note: Chose my custom color theme to represent each category.
+  scale_fill_manual(values = c(
+    "More vulnerable than expected" = "#92F96A",
+    "More resilient than expected" = "#74AC64",
+    "About as expected" = "gray70"
+  )) +
+  
+  # Note: Added titles to each axis, legends, main title and subtitle.
+  labs(
+    title = "Asthma Burden Beyond Expected Pollution Risk in Chicago",
+    subtitle = "Positive values show neighborhoods with higher asthma than predicted from traffic-related pollution burden",
+    x = "Asthma mismatch (actual - expected)",
+    y = NULL,
+    fill = NULL,
+    size = "Traffic burden"
+  ) +
+  
+  # Note: Used a minimal theme and customized multiple elements in order to improve readability and avoid crowding.
+geom_col(width = 0.4) +
+
+scale_y_discrete(expand = expansion(mult = c(0.02, 0.02))) +
+
+theme_minimal(base_size = 12) +
+theme(
+  panel.grid.major.y = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+  plot.subtitle = element_text(size = 11, hjust = 0.5),
+  axis.text.y = element_text(size = 11),
+  axis.text.x = element_text(size = 11),
+  legend.title = element_text(size = 11),
+  legend.text = element_text(size = 10),
+  plot.margin = margin(15, 20, 15, 15)
+)
+#Note: Converted static ggplot into an interactive plot by including the tooltip feature.
+ggplotly(p, tooltip = "text")
+
+```
+**This graph was created in order to compare the expected health outcomes for 77 Chicago neighborhoods based on the environmental pollution outcomes to real asthma levels. Expected Asthma levels were showcased using the traffic burden dataset on top where lime green represents positive values (>0) that matched expected outcomes. The bottom showcases resilient neighborhoods that did not match expected outcomes in the negative value range (<0) in dark green. Grey circles represent exactly where outcomes match expectations.Additionally, the tooltip function was used in order for the viewer to see data on individual plot points, this is helpful due to our large dataset. By hovering over each point, the viewer is able to directly verify the mismatch and confirm infromation.The graph suggests health outcomes for asthma are have a low-moderate correlation to traffic related pollution as there is a general positive trend with a few positive outliers such as Lakeview and Austin. However, there is variability in the dataset which could mean multiple factors contribute to asthma outcomes.** 
+
+```{r}
+
+library(tidyverse)
+library(plotly)
+library(janitor)
+
+#Note: Loaded the data set and cleaned column names using the janitor package. 
+health_data <- read_csv("Chi_Health_Atlas_Data.csv") %>%
+  clean_names()
+
+#Note: Selected only the variables needed for the graph. 
+plot_data <- health_data %>%
+  select(
+    name,
+    asthma = hcsath_2023_2024,
+    pollution = trf_2020
+  ) %>%
+  drop_na()
+
+#Note: Calculated averages for asthma and pollution across the city.
+avg_asthma <- mean(plot_data$asthma, na.rm = TRUE)
+avg_pollution <- mean(plot_data$pollution, na.rm = TRUE)
+
+# Note: Created the base ggplot and added the x and y axes.
+p <- ggplot(
+  plot_data,
+  aes(
+    x = pollution,
+    y = asthma,
+    color = pollution,
+    text = paste(
+      "Neighborhood:", name,
+      "<br>Pollution:", round(pollution, 2),
+      "<br>Asthma:", round(asthma, 2)
+    )
+  )
+) +
+  
+  #Note: Plotted each neighborhood as a seperate data point. 
+  geom_point(size = 3, alpha = 0.85) +
+  
+  #Note: Added dashed reference lines at city averages
+  geom_vline(xintercept = avg_pollution, linetype = "dashed", color = "gray40") +
+  geom_hline(yintercept = avg_asthma, linetype = "dashed", color = "gray40") +
+  
+  #Note: Used my custom green gradient colors instead of category colors
+  scale_color_gradientn(
+    colors = c("#dff3e3", "#9bd49f", "#4caf50", "#1b5e20"),
+    name = "Traffic Pollution"
+  ) +
+  
+  #Note: Added axes titles, main title and labels, kept minimal theme.
+  labs(
+    title = "Asthma vs Traffic Pollution in Chicago Neighborhoods",
+    x = "Traffic Pollution",
+    y = "Asthma Prevalence"
+  ) +
+  
+
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 15, hjust = 0.0),
+    axis.title = element_text(size = 12),
+    legend.position = "right"
+  )
+
+#Note: Used a tooltip to make plot interactive.
+ggplotly(p, tooltip = "text")
+```
+**The graph demonstrates the relationship between traffic-related pollution and prevalence of asthma across 77 Chicago neighborhoods. The x-axis represents traffic-related pollution and the y-axis represents the percentage of adults with asthma (prevelance). The color gradient increases in hue to a darker green in correlation to higher pollution levels. The dashed lines represent city averages which divide the plot into four quadrants. Each plot point represents a specific Chicago neighborhood and a tooltip feature was used in order to showcase interactivity. Each plot point tells the viewer what neighborhood they are looking at, as well as the asthma and pollution levels. Overall, there is a general positive relationship in the data as plot points are scattered at an upwards direction, suggesting pollution could contribute to asthma levels. Hoever, plot-points do not emphasize a linear relationship and are scattered, meaning there could be other contributing factors to asthma levels. Furthermore, the quadrants on the graph help reveal patterns, the top right quadrant show expected burden. The top left, unexpected vulnerability, bottom right: resilience and bottom left: highest resilience. In conclusion, the graph helps the viewer see vulnerability patterns beyond environmental exposure.**
+
+```{r}
+library(tidyverse)
+library(plotly)
+library(janitor)
+
+#Note: Loaded and cleaned data set.
+health_data <- read_csv("Chi_Health_Atlas_Data.csv") %>%
+  clean_names()
+
+#Note: Selected only the variables required for the graph. 
+plot_data <- health_data %>%
+  select(
+    name,
+    asthma = hcsath_2023_2024,
+    pollution = trf_2020,
+    ej_burden = chaknkc_2023
+  ) %>%
+  drop_na()
+
+#Note: Incorporated mismatch model to calculate expected asthma levels based on traffic pollution.
+mismatch_model <- lm(asthma ~ pollution, data = plot_data)
+
+#Note: Calculated mismatch and categorized neighborhoods.
+plot_data <- plot_data %>%
+  mutate(
+    expected_asthma = predict(mismatch_model),
+    mismatch = asthma - expected_asthma,
+    category = case_when(
+      mismatch > 0 ~ "More vulnerable than expected",
+      mismatch < 0 ~ "More resilient than expected",
+      TRUE ~ "About as expected"
+    ),
+    hover_text = paste(
+      "Neighborhood:", name,
+      "<br>EJ burden:", ej_burden,
+      "<br>Mismatch:", round(mismatch, 2),
+      "<br>Asthma:", round(asthma, 2),
+      "<br>Pollution:", round(pollution, 2),
+      "<br>Category:", category
+    )
+  )
+
+#Note: Created the mismatch plot.
+p <- ggplot(plot_data,
+            aes(x = ej_burden, y = mismatch,
+                color = category,
+                text = hover_text)) +
+  
+  #Note: Plotted points for each neighborhood.
+  geom_point(size = 3, alpha = 0.8) +
+  
+  #Note: Added regression line to show overall trend
+  geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.8) +
+  
+  #Note: Added the dashed horizontal line at zero to create the mismatch.
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  
+  #Note:Used custom green color scheme.
+  scale_color_manual(values = c(
+    "More vulnerable than expected" = "#2e7d32",
+    "More resilient than expected" = "#81c784",
+    "About as expected" = "gray70"
+  )) +
+  
+  #Note: Added axis labels, a title, legends and subtitles, kept minimal theme.
+  labs(
+    title = "Environmental Justice Burden and Asthma Mismatch",
+    subtitle = "Exploring whether vulnerable neighborhoods face disproportionate health impacts",
+    x = "Environmental Justice Burden",
+    y = "Asthma Mismatch (Actual - Expected)",
+    color = "Category"
+  ) +
+  
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(size = 11, hjust = 0.5),
+    legend.position = "bottom"
+  )
+
+#Note: Converted to interactive by incorporating a tooltip.
+ggplotly(p, tooltip = "text")
+```
+**The graph showcases the relationship between the environmental justice burden of asthma and asthma mismatch rates. The graph plots environmental justice burden and asthma on the x-axis and asthma mismatch on the y-axis. Asthma mismatch is determined by actual minus expected asthma levels based on traffic pollution. The graph aims to explore weather certain neighborhoods are vulnerable and disproportionately affected by asthma. Neighborhoods over the dotted line (0>) have a higher than expected asthma level despite traffic pollution. Neighborhoods under the dotted line (<0) more resilient than expected asthma rates. The graph also includes an interactive feature that allows the viewer to hover over a specific neighborhood to see neighborhood name, environmental justice burden, mismatch score, asthma prevalence and pollution levels. This graph suggests a slight positive relationship between higher levels of EJ burden and positive mismatch yields. However, variability still exists in the graph and distribution appears mostly even. It is possible, neighborhood plays a role into asthma levels.**
+
+Conclusion:
+
