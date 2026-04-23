@@ -1,8 +1,15 @@
 ---
-title: "BIOS333Project"
+title: "Exploring the relationship between Asthma and Environmental Burden in the City of Chicago"
 output: html_document
 ---
 
+Part I: Abstract 
+
+**Introduction: This research aims to explore weather traffic pollution disproportionately affects some Chicago neighborhoods more than others. According to the American Lung Association previous findings have revealed there are correlations between air quality/pollution and health outcomes in the city of Chicago, predominantly affecting densely populated, disadvantaged areas. Based on this research, we hypothesize neighborhoods with higher levels of environmental burden will be more prone to higher asthma levels.**
+
+**Methods: Descriptive analysis was used in order to conduct data exploration research on Chicago pollution metrics and their correlation to health outcomes. Data from the Chicago Health Atlas and Chicago Housing Authority was used in order to create four figures using R Studio, packages include: ggplot, tidyverse, janitor, and plotly. Figures used included a leaflet map, mismatch graph, standard plot and environmental burden plot. Graph interpretation was used in order to conduct results.**
+
+Part II: Data Filtration
 ```{r} 
 library(tidyverse)
 library(janitor)
@@ -19,7 +26,9 @@ asthma_plot <- health_data %>%
     pollution = trf_2020
   )
 ``` 
+Part III: Results
 
+**Figure 1: Leaflet Map of Asthma Burden of Chicago**
 ```{r}
 library(tidyverse)
 library(janitor)
@@ -79,11 +88,10 @@ leaflet(map_data) %>%
     opacity = 0.9
   )
 ```
-**The leaflet map sets the baseline data that shows where asthma is distributed in the city. This map is interactive and represents the prevalence of asthma in 72 Chicago neighborhoods. Asthma concentration is represented in large yellow circles which decrease in size and gradience from dark green (greater concentrations) to light green (lower concentrations). Viewers can zoom into specific neighborhoods and hover over them to reveal neighborhood name, asthma prevalence and traffic pollution levels. This map helps us identify spatial distribution of asthma throughout the city. It also helps us identify weather there is a correlation among pollution and asthma for specific neighborhoods. The map shows us asthma levels have a relatively even distribution in the city of Chicago with some higher concentrations closer to the northeast side such as Lakeview and Albany Park. However, there is no clear relationship between traffic pollution and asthma prevelance as these factors vary throughout neighborhoods.  
+**The leaflet map sets the baseline data that shows where asthma is distributed in the city. This map is interactive and represents the prevalence of asthma in 72 Chicago neighborhoods. Asthma concentration is represented in large yellow circles which decrease in size and gradience from dark green (greater concentrations) to light green (lower concentrations). Viewers can zoom into specific neighborhoods and hover over them to reveal neighborhood name, asthma prevalence and traffic pollution levels. This map helps us identify spatial distribution of asthma throughout the city. It also helps us identify weather there is a correlation among pollution and asthma for specific neighborhoods. The map shows us asthma levels have a relatively even distribution in the city of Chicago with some higher concentrations on the northside such as Lakeview and Albany Park. However, there is no clear relationship between traffic pollution and asthma prevalence as these factors vary throughout neighborhoods.** 
 
 
-
-
+**Figure 2: Mismatch Graph of Pollution Risk**
 ```{r, fig.height=20, fig.width=12}
 
 
@@ -181,8 +189,11 @@ theme(
 ggplotly(p, tooltip = "text")
 
 ```
-**This graph was created in order to compare the expected health outcomes for 77 Chicago neighborhoods based on the environmental pollution outcomes to real asthma levels. Expected Asthma levels were showcased using the traffic burden dataset on top where lime green represents positive values (>0) that matched expected outcomes. The bottom showcases resilient neighborhoods that did not match expected outcomes in the negative value range (<0) in dark green. Grey circles represent exactly where outcomes match expectations.Additionally, the tooltip function was used in order for the viewer to see data on individual plot points, this is helpful due to our large dataset. By hovering over each point, the viewer is able to directly verify the mismatch and confirm infromation.The graph suggests health outcomes for asthma are have a low-moderate correlation to traffic related pollution as there is a general positive trend with a few positive outliers such as Lakeview and Austin. However, there is variability in the dataset which could mean multiple factors contribute to asthma outcomes.** 
+**Descrption: This graph was created in order to compare the expected health outcomes for 77 Chicago neighborhoods based on the environmental pollution outcomes to real asthma levels. Expected Asthma levels were showcased using the traffic burden data set on top where lime green represents positive values (>0) that matched expected outcomes. The bottom showcases resilient neighborhoods that did not match expected outcomes in the negative value range (<0) in dark green. Grey circles represent exactly where outcomes match expectations. The tooltip function helps the viewer see data on individual plot points. This is helpful due to our large data set. By hovering over each point, the viewer is able to directly verify the mismatch and confirm information.**
 
+**Analysis :The graph suggests health outcomes for asthma are have a low-moderate correlation to traffic related pollution as there is a general positive trend with a few positive outliers such as Lakeview and Austin. However, there is variability in the dataset which could mean multiple factors contribute to asthma outcomes.** 
+
+**Figure 3: Standard Scatter Plot of Asthama vs Traffic Pollution**
 ```{r}
 
 library(tidyverse)
@@ -252,8 +263,11 @@ p <- ggplot(
 #Note: Used a tooltip to make plot interactive.
 ggplotly(p, tooltip = "text")
 ```
-**The graph demonstrates the relationship between traffic-related pollution and prevalence of asthma across 77 Chicago neighborhoods. The x-axis represents traffic-related pollution and the y-axis represents the percentage of adults with asthma (prevelance). The color gradient increases in hue to a darker green in correlation to higher pollution levels. The dashed lines represent city averages which divide the plot into four quadrants. Each plot point represents a specific Chicago neighborhood and a tooltip feature was used in order to showcase interactivity. Each plot point tells the viewer what neighborhood they are looking at, as well as the asthma and pollution levels. Overall, there is a general positive relationship in the data as plot points are scattered at an upwards direction, suggesting pollution could contribute to asthma levels. Hoever, plot-points do not emphasize a linear relationship and are scattered, meaning there could be other contributing factors to asthma levels. Furthermore, the quadrants on the graph help reveal patterns, the top right quadrant show expected burden. The top left, unexpected vulnerability, bottom right: resilience and bottom left: highest resilience. In conclusion, the graph helps the viewer see vulnerability patterns beyond environmental exposure.**
+**Description: The graph demonstrates the relationship between traffic-related pollution and prevalence of asthma across 77 Chicago neighborhoods. The x-axis represents traffic-related pollution and the y-axis represents the percentage of adults with asthma (prevalence). The color gradient increases in hue to a darker green in correlation to higher pollution levels. The dashed lines represent city averages which divide the plot into four quadrants. Each plot point represents a specific Chicago neighborhood and a tooltip feature was used in order to showcase interactivity. Each plot point tells the viewer what neighborhood they are looking at, as well as the asthma and pollution levels.**
 
+**Analysis: Overall, there is a general positive relationship in the data as plot points are scattered at an upwards direction, suggesting pollution could contribute to asthma levels. However, plot-points do not emphasize a linear relationship and are scattered, meaning there could be other contributing factors to asthma levels. Furthermore, the quadrants on the graph help reveal patterns, the top right quadrant show expected burden. The top left, unexpected vulnerability, bottom right: resilience and bottom left: highest resilience. Some outliers are observed but there is no clear pattern. In conclusion, the graph helps the viewer see vulnerability patterns beyond environmental exposure.**
+
+**Figure 4: Environmental Justice Burden Plot**
 ```{r}
 library(tidyverse)
 library(plotly)
@@ -337,7 +351,11 @@ p <- ggplot(plot_data,
 #Note: Converted to interactive by incorporating a tooltip.
 ggplotly(p, tooltip = "text")
 ```
-**The graph showcases the relationship between the environmental justice burden of asthma and asthma mismatch rates. The graph plots environmental justice burden and asthma on the x-axis and asthma mismatch on the y-axis. Asthma mismatch is determined by actual minus expected asthma levels based on traffic pollution. The graph aims to explore weather certain neighborhoods are vulnerable and disproportionately affected by asthma. Neighborhoods over the dotted line (0>) have a higher than expected asthma level despite traffic pollution. Neighborhoods under the dotted line (<0) more resilient than expected asthma rates. The graph also includes an interactive feature that allows the viewer to hover over a specific neighborhood to see neighborhood name, environmental justice burden, mismatch score, asthma prevalence and pollution levels. This graph suggests a slight positive relationship between higher levels of EJ burden and positive mismatch yields. However, variability still exists in the graph and distribution appears mostly even. It is possible, neighborhood plays a role into asthma levels.**
+**Description: The graph showcases the relationship between the environmental justice burden of asthma and asthma mismatch rates. The graph plots environmental justice burden and asthma on the x-axis and asthma mismatch on the y-axis. Asthma mismatch is determined by actual minus expected asthma levels based on traffic pollution. The graph aims to explore weather certain neighborhoods are vulnerable and disproportionately affected by asthma. Neighborhoods over the dotted line (0>) have a higher than expected asthma level despite traffic pollution. Neighborhoods under the dotted line (<0) more resilient than expected asthma rates. The graph also includes an interactive feature that allows the viewer to hover over a specific neighborhood to see neighborhood name, environmental justice burden, mismatch score, asthma prevalence and pollution levels.** 
 
-Conclusion:
+**Analysis: This graph suggests a slight positive relationship between higher levels of EJ burden and positive mismatch yields. However, variability still exists in the graph and distribution appears mostly even. It is possible, neighborhood plays a role into asthma levels.**
+
+Part IV: Discussion
+
+**Conclusion: Overall, I wanted to show the relationship between pollution and asthma levels. I aimed to explore weather asthma cases were higher based on traffic pollution and how these rates affect environmental burden. My first graph is a leaflet map that showcases asthma prevalence in the Chicagoland area. This figure showed some higher concentrations of asthma in the northern region, however these differences were not significant. I made this map to establish baseline levels of asthma prevalence throughout the city. The second figure was a mismatch graph made to see weather certain neighborhoods experience higher or lower expected levels of asthama based on traffic pollution. The findings revealed the same neighborhoods with higher levels of asthma on figure 1 were the same neighborhoods with more vulerability than expected: Lakeview, Austin, Albany Park. There was a slight positive correlation between asthma levels and pollution with some variability. Figure 3 is a scatter plot with dashed lines that indicate city-averages between traffic-related pollution and asthma prevalence. This figure shows weather asthma tends to increase as pollution increases to establish a baseline relationship between the two variables. Findings reveal the same outliers as previous figures have higher asthma levels than pollution levels. This suggests pollution does not fully explain asthma outcomes. The final figure (4) attempts to uncover weather environmental justice predicts weather a neighborhood will have higher or lower asthma levels than expected. The findings reveal there is no strong pattern between the two variables as points are widely scattered with a few outliers. For example the neighborhood of Lakeview has low environmental justice burden but a high positive mismatch, the neighborhood of Austin has a high environmental burden, and high positive mismatch. These random variations reveal no real pattern between the two. In conclusion, there is no real correlation between asthma traffic pollution and asthma levels. However, there are a few neighborhoods that are disproportionately affected for unknown reasons which could be potentially attributed to traffic pollution. The results suggest further analyses needs to be conducted in order to reveal asthma causation.** 
 
