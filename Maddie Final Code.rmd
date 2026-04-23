@@ -1,0 +1,197 @@
+---
+title: "BIOS 333 Mini Project 2 - Maddie's Section - Diabetes Mismatch Index"
+author: "Maddie, Lanie, Lizbeth, & Keyla"
+date: "2026-04-02"
+output: html_document
+---
+<style>
+body {
+  font-family: "Times New Roman", Times, serif;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/Desktop/BIOS 333") 
+library(tidyverse)
+library(plotly)
+library(ggrepel)
+```
+
+## PART 1: SETUP + DATA CLEANING
+```{r}
+# Define pink/purple color palette for consistency.
+pink_purple <- c("#FF4FA3","#C77DFF", "#7B2CBF", "#3A0CA3")
+
+# Load in dataset:
+df <- read.csv("raw_data/Chi_Health_Atlas_Data.csv")
+
+# Clean dataset: remove missing values for important variables 
+df_clean <- df %>%
+  filter(!is.na(TRF_2020),
+         !is.na(HCSDIA_2023.2024),
+         !is.na(PMC_2020),
+         !is.na(CHAKNKC_2023))
+```
+---
+
+## PART 2: INSPECTING THE DATA
+```{r data-check}
+# Inspect dataset:
+colnames(df)
+head(df)
+str(df)
+summary(df)
+```
+
+The dataset includes 77 Chicago community areas with 23 variables describing population, environmental exposure, and health outcomes. Initial inspection shows that diabetes is recorded as counts rather than rates, meaning that values are influenced by population size. There is also variation in environmental exposure and environmental justice burden across neighborhoods, suggesting that both environmental and stucture factors differ across the city of Chicago, and may contribute to uneven health outcomes. 
+
+---
+
+## PART 3: VISUALIZATION 1: EXPECTATION
+```{r visualization 1}
+# VISUALIZATION 1: EXPECTATION
+# Hypothesis: Higher environmental exposure -> worse health
+# Specifically: Traffic risk should increase diabetes prevalence
+
+ggplot(df_clean, aes(
+  x = TRF_2020,
+  y = HCSDIA_2023.2024
+)) +
+  geom_point(color = "#C77DFF",
+             size = 3,
+             alpha = 0.7
+            ) +
+            geom_smooth(
+              method = "lm",
+              color = "#7B2CBF"
+            ) +
+            scale_x_log10() +
+            labs(
+              title = "Expectation: Environmental Risk Predicts Diabetes",
+              x = "Traffic Risk (Environmental Exposure)",
+              y = "Diabetes Prevalence(%)"
+            ) +
+            theme_minimal(base_family = "Times New Roman")
+```
+
+The expectation is that higher environmental exposure will lead to worse health outcomes, specifically higher diabetes prevalence. However, the observed relationship is weak and does not show a clear trend, suggesting that environmental exposure alone may not fully explain patterns in diabetes across neighborhoods. 
+
+---
+
+## PART 4: VISUALIZATION 2: REALITY (MULTI-LAYERED APPROACH)
+```{r visualization 2}
+# VISUALIZATION 2: REALITY 
+# Goal: Show that the relationship is more complex
+# Adds multiple variables: park access + environmental justic burden
+df_clean <- df_clean %>%
+  mutate(
+    diabetes_rate = (HCSDIA_2023.2024 / Population) * 100
+  )
+
+p <- ggplot(df_clean, aes(
+  x = TRF_2020,
+  y = diabetes_rate,
+  color = PMC_2020,
+  size = CHAKNKC_2023,
+  text = paste(
+    "Neighborhood:", Name,
+    "<br>Traffic Risk:", TRF_2020,
+    "<br>Diabetes (%):", round(diabetes_rate, 2),
+    "<br>Park Access:", PMC_2020,
+    "<br>Env. Justice:", CHAKNKC_2023
+  )
+)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", color = "#3A0CA3", se=FALSE) +
+  scale_color_gradientn(
+    colors = pink_purple,
+    name = "Park Access (Higher = More Green Space)"
+  ) +
+  scale_size(
+    range = c(4, 14),
+    name = "Environmental Justice Burden (Higher = More Exposure)"
+  ) +
+  scale_x_log10() + 
+  labs(
+    title = "Reality: Environmental Exposure Alone Does Not Explain Diabetes Patterns",
+    x = "Traffic Risk (log scale)",
+    y = "Diabetes Prevalence (%)"
+  ) +
+  theme_minimal(base_family = "Times New Roman")
+
+ggplotly(p, tooltip = "text")
+```
+
+When additional variables are included in the model, the relationship between exposure and health becomes more complex. Park access and environmental justice burden add important context, but patterns still remain inconsistent. This suggests that health outcomes are shaped by multiple interacting environmental and structural variables.
+
+---
+
+## PART 5: VISUALIZATION 3: MISMATCH INDEX (PRIMARY ANALYSIS)
+```{r visualization 3}
+# VISUALIZATION 3: MISMATCH INDEX 
+# Goal: Identify where pollution fails to predict diabetes
+# Method: Use regression residuals as a mismatch index
+model <- lm(HCSDIA_2023.2024 ~ TRF_2020, data = df_clean)
+
+df_clean <- df_clean %>%
+  mutate(mismatch = resid(model))
+
+ggplot(df_clean, aes(
+  x = TRF_2020,
+  y = mismatch,
+  color = mismatch
+)) +
+  geom_point(size = 4, alpha = 0.9) + 
+  scale_color_gradient2(
+    low = "#FF4FA3",
+    mid = "#C77DFF",
+    high = "#3A0CA3",
+    midpoint = 0,
+    name = "Mismatch Index"
+) +
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed",
+) + 
+  labs(
+    title = "Mismatch Index: Where Pollution Fails to Predict Diabetes",
+    x = "Traffic Risk",
+    y = "Mismatch (Observed - Expected Diabetes)"
+  ) +
+  theme_minimal(base_family = "Times New Roman")
+```
+
+The mismatch index captures the difference between observed and expected diabetes outcomes based on environmental exposure. This reveals neighborhoods where diabetes prevalence is lower or higher than originally predicted. These deviations highlight areas of vulnerability and resilience that cannot be explained by exposure alone, showcasing that additional structural factors influence health outcomes. 
+
+---
+
+## PART 6: IDENTIFYING EXTREME CASES
+```{r identifying extreme cases}
+# Highlights: Neighborhoods with strongest mismatch
+# Helps identify resilience vs vulnerability 
+
+ggplot(df_clean, aes(
+  x = TRF_2020,
+  y = mismatch,
+  label = Name
+)) +
+  geom_point(color = "#C77DFF", size = 3) +
+  geom_text_repel(size = 3) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_minimal(base_family = "Times New Roman")
+```
+
+Identifying neighborhoods with the most extreme mismatch values highlights patterns of inequality. Some areas show much higher diabetes prevalence than expected, indicating additional risk factors beyond environmental exposures. Other areas performed better than expected, demonstrating that both environmental and social factors influence health outcomes. 
+
+---
+
+## PART 7: FINAL TAKEAWAY
+
+Overall, when analyzing the clean and transformed data, diabetes patterns across Chicago are not fully explained by environmental exposure alone. While pollution is an important variable, it does not consistently predict health outcomes. The mismatch index calculated in Part 5 reveals that socioeconomic conditions also play a critical role, emphasizing the importance of considering multiple variables of multiple types when studying health disparities.
+
+## PART 8: Session info
+
+```{r}
+sessionInfo()
+```
