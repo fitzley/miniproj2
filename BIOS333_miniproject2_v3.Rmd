@@ -1,0 +1,1523 @@
+---
+title: "Mismatch Index: When Environment, Health, and Wealth Don’t Align"
+author: "Your Name"
+date: "`r Sys.Date()`"
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+    source_code: embed
+    toc: true
+    theme:
+      version: 4
+      bootswatch: flatly
+      primary: "#ed4a1a"
+      secondary: "#48bea1"
+      base_font:
+        google: "Source Sans Pro"
+      heading_font:
+        google: "Montserrat"
+---
+
+
+```{r setup, include=FALSE}
+
+#Note: This runs first and prepares the environment.
+#Note: We suppress warnings/messages for a clean dashboard.
+
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+#Note: Core libraries for data manipulation and visualization
+library(tidyverse)
+library(plotly)
+library(flexdashboard)
+library(broom)
+library(DT)
+library(leaflet)
+library(readr)
+library(dplyr)
+library(sf)
+library(ggplot2)
+library(janitor)
+library(scales)
+library(ggrepel)
+library(ggcorrplot)
+library(patchwork)
+
+#Note: SUNSET COLOR PALETTE
+#Note: Consistent colors across all visuals improves readability and professionalism
+sun_orange <- "#FF7A00"
+sun_yellow <- "#FFC300"
+sun_red    <- "#FF3B3B"
+sun_pink   <- "#FF8FA3"
+dark_gray  <- "#2F2F2F"
+
+# load data
+url <- "https://raw.githubusercontent.com/fitzley/miniproj2/refs/heads/main/health_data.csv"
+health_data2 <- read.csv(url)
+
+# read shapefile of Chicago
+chicago_sf <- st_read("https://raw.githubusercontent.com/fitzley/miniproj2/refs/heads/main/chi_comm_areas.geojson", quiet = TRUE)
+
+# join health data with shapefile
+chicago_map <- chicago_sf %>%
+  left_join(health_data2 %>%
+              mutate(GEOID = as.character(GEOID)), by = c("area_numbe" = "GEOID"))
+
+# pull hardship index from most recent census data from github repository
+url2 <- "https://raw.githubusercontent.com/fitzley/miniproj2/refs/heads/main/h_index.csv"
+h_index <- read.csv(url2) %>%
+  slice(-1, ) # remove first row
+
+# join hardship index to health + map data
+chicago_map <- chicago_map %>%
+  left_join(h_index %>% select(GEOID, `HDX_2020.2024`) %>% mutate(GEOID = as.character(GEOID), `HDX_2020.2024` = as.numeric(`HDX_2020.2024`)), by = c("area_numbe" = "GEOID"))
+
+# transform data into percents
+chicago_map <- chicago_map %>%
+  mutate(
+    diabetes_rate = HCSDIA_2023.2024 / Population * 100,
+    obesity_rate = HCSOB_2023.2024 / Population * 100,
+    hypertension_rate = HCSHYT_2023.2024 / Population * 100,
+    asthma_rate = HCSATH_2023.2024 / Population * 100,
+    hard_index = HDX_2020.2024,
+    pct_white = PCT.W_2020.2024,
+    disease_burden = rowMeans(cbind(diabetes_rate, obesity_rate, hypertension_rate, asthma_rate), na.rm = TRUE)
+  ) %>% # add resilience and vulnerability scores
+  mutate(
+    resilient = hard_index > quantile(hard_index, 0.5, na.rm = TRUE) &
+                disease_burden < quantile(disease_burden, 0.5, na.rm = TRUE),
+    vulnerable = hard_index < quantile(hard_index, 0.5, na.rm = TRUE) &
+                 disease_burden > quantile(disease_burden, 0.5, na.rm = TRUE)
+  ) %>% # add diabetes specific resilience and vulnerability scores
+  mutate(
+    resilient_dia = hard_index > quantile(hard_index, 0.5, na.rm = TRUE) &
+                    diabetes_rate < quantile(diabetes_rate, 0.5, na.rm = TRUE),
+    vulnerable_dia = hard_index < quantile(hard_index, 0.5, na.rm = TRUE) &
+                     diabetes_rate > quantile(diabetes_rate, 0.5, na.rm = TRUE),
+    category_dia = case_when(
+      resilient_dia == TRUE ~ "Resilient",
+      vulnerable_dia == TRUE ~ "Vulnerable",
+      TRUE ~ "Expected"
+    )
+  )
+
+# remove Fuller Park and Burnside - raw number data do not match CHI Atlas rates, suspected data quality issue
+chicago_map <- chicago_map %>%
+  filter(!community %in% c("FULLER PARK", "BURNSIDE"))
+
+# set up cor data
+cor_data <- chicago_map %>%
+  st_drop_geometry() %>%
+  select(
+    Diabetes = diabetes_rate,
+    Obesity = obesity_rate,
+    Hypertension = hypertension_rate,
+    Asthma = asthma_rate,
+    Pct_White = PCT.W_2020.2024,
+    Air_Quality = CHASBQJ_2023.2024,
+    Traffic_Risk = TRF_2020,
+    Env_Justice = CHAKNKC_2023,
+    Hardship = hard_index,
+    Community = Name
+  ) %>%
+  drop_na()
+```
+Overview
+=====================================
+## Table of Contents
+
+1. Project Overview  
+
+2. Overall Methodology
+
+3. Data Preparation  
+
+3. Health Outcomes Across Chicago 
+   
+   - Hypertension  
+   
+   - Asthma  
+   
+   - Diabetes
+
+4. Environmental Exposure  
+   - Particulate Matter (PM2.5) Distribution
+5. Hypertension Analysis (Focused Section)  
+   - Spatial Distribution  
+   - Pollution Relationship  
+   - Mismatch Index  
+
+6. Conclusions  
+ 
+ 
+7. Future Directions
+
+
+8. Acknowledgements
+
+## Row {data-height="600"}
+
+### Project Overview
+
+Health outcomes across Chicago are not randomly distributed. Instead, they emerge from a layered interaction between environmental exposure, socioeconomic conditions, and neighborhood-level structural factors.
+
+This project investigates how chronic diseases vary across Chicago communities and where expected relationships between environment and health begin to break down. While pollution and population density are often used to explain disease burden, these variables alone do not fully capture the uneven patterns observed across neighborhoods.
+
+Our central research question is:
+
+**Where does do environmental and social determinants of health fail to explain health outcomes, and what might explain these gaps?**
+
+To address this, our team examines four major health indicators: obesity, hypertension, asthma, and diabetes. Each condition captures a different dimension of health risk. Obesity reflects lifestyle and access to resources, asthma is closely tied to environmental exposure, diabetes represents long-term metabolic health, and hypertension serves as a cumulative indicator of both environmental and structural stress.
+
+Together, these measures allow us to move beyond single-variable explanations and instead identify where expected relationships break down. We introduce a *Mismatch Index* to capture these deviations, highlighting neighborhoods that experience either unexpectedly high or unexpectedly low health burdens.
+
+By combining environmental, demographic, and health data, this project aims to reveal patterns of vulnerability, resilience, and inequality embedded within Chicago’s geography.
+
+Overall Disease Burden and Diabetes Mismatch Index
+=====================================
+
+## Row {data-height="400"}
+
+### Disease Burden by Community Area
+
+```{r disease maps, echo=FALSE, out.width="100%", results='asis'}
+# create chloropleth function
+make_map <- function(var, title, midpt) {
+  ggplot(chicago_map) +
+    geom_sf(aes(fill = .data[[var]],
+                text = paste0("<b>", Name, "</b><br>",
+                              title, ": ", round(.data[[var]], 1), "%"))) +
+    scale_fill_gradient2(low = "#2e4f4f",
+                         mid = "#f4bb8f",
+                         high = "#ff0000",
+                         midpoint = midpt,
+                         na.value = "black",
+                         name = "% Adults") +
+    theme_void() +
+    theme(legend.position = "none")
+}
+
+# construct maps
+pd <- make_map("diabetes_rate", "Diabetes", mean(chicago_map$diabetes_rate, na.rm = TRUE))
+po <- make_map("obesity_rate", "Obesity", mean(chicago_map$obesity_rate, na.rm = TRUE))
+ph <- make_map("hypertension_rate", "Hypertension", mean(chicago_map$hypertension_rate, na.rm = TRUE))
+pa <- make_map("asthma_rate", "Asthma", mean(chicago_map$asthma_rate, na.rm = TRUE))
+
+# generate interactive maps of spatial patterns of disease
+pd2 <- ggplotly(pd, tooltip = "text") %>% layout(autosize = TRUE)
+po2 <- ggplotly(po, tooltip = "text") %>% layout(autosize = TRUE)
+ph2 <- ggplotly(ph, tooltip = "text") %>% layout(autosize = TRUE)
+pa2 <- ggplotly(pa, tooltip = "text") %>% layout(autosize = TRUE)
+
+# arrange plots in a line
+subplot(pd2, po2, ph2, pa2, nrows = 1) %>%
+  layout(
+    autosize = TRUE,
+    annotations = list(
+      list(x = 0.125, y = 1.0, text = "<b>Diabetes</b>",
+           showarrow = FALSE, xref = "paper", yref = "paper", xanchor = "center",
+           font = list(size = 14, color = "#7b4419")),
+      list(x = 0.375, y = 1.0, text = "<b>Obesity</b>",
+           showarrow = FALSE, xref = "paper", yref = "paper", xanchor = "center",
+           font = list(size = 14, color = "#7b4419")),
+      list(x = 0.625, y = 1.0, text = "<b>Hypertension</b>",
+           showarrow = FALSE, xref = "paper", yref = "paper", xanchor = "center",
+           font = list(size = 14, color = "#7b4419")),
+      list(x = 0.875, y = 1.0, text = "<b>Asthma</b>",
+           showarrow = FALSE, xref = "paper", yref = "paper", xanchor = "center",
+           font = list(size = 14, color = "#7b4419"))
+    )
+  ) %>%
+  config(displayModeBar = FALSE)
+```
+
+## Row {data-height="120"}
+
+### Mean Diabetes Rate
+
+```{r}
+valueBox(
+  value = paste0(round(mean(chicago_map$diabetes_rate, na.rm = TRUE), 1), "%"),
+  caption = "Mean Diabetes Rate",
+  icon = "fa-droplet",
+  color = "#2d4f4f"
+)
+```
+
+### Mean Obesity Rate
+
+```{r}
+valueBox(
+  value = paste0(round(mean(chicago_map$obesity_rate, na.rm = TRUE), 1), "%"),
+  caption = "Mean Obesity Rate",
+  icon = "fa-weight-hanging",
+  color = "#f4bb8f"
+)
+```
+
+### Mean Hypertension Rate
+
+```{r}
+valueBox(
+  value = paste0(round(mean(chicago_map$hypertension_rate, na.rm = TRUE), 1), "%"),
+  caption = "Mean Hypertension Rate",
+  icon = "fa-heart-pulse",
+  color = "#2d4f4f"
+)
+```
+
+### Mean Asthma Rate
+
+```{r}
+valueBox(
+  value = paste0(round(mean(chicago_map$asthma_rate, na.rm = TRUE), 1), "%"),
+  caption = "Mean Asthma Rate",
+  icon = "fa-lungs",
+  color = "#f4bb8f"
+)
+```
+
+## Row {data-height="600"}
+
+### Summary Table of Disease Burden
+
+```{r top diabetes neighborhoods}
+chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(diabetes_rate)) %>%
+  arrange(desc(diabetes_rate)) %>%
+  select(Community = community, Diabetes = diabetes_rate, Obesity = obesity_rate, Hypertension = hypertension_rate, Asthma = asthma_rate) %>%
+  mutate(across(where(is.numeric), ~round(., 1))) %>%
+  DT::datatable(options = list(
+  pageLength = 67,
+  dom = 't',
+  scrollY = "450px",
+  scrollCollapse = TRUE
+))
+```
+
+### Spatial Determinants of Disease Burden 
+
+``` {r chloropleth disease burden }
+# calculate mean of all disease rates
+chicago_map <- chicago_map %>%
+  mutate(disease_burden = rowMeans(cbind(diabetes_rate, obesity_rate, hypertension_rate, asthma_rate), na.rm = TRUE))
+
+# visualize on map
+disease_burden <- ggplot(chicago_map) +
+  geom_sf(aes(fill = disease_burden,
+              text = paste0("<b>", Name, "</b><br>",
+              "<b>Disease Burden:</b> ", round(disease_burden, 1), "%"))) +
+  scale_fill_gradient2(low = "#2e4f4f", mid = "#f4bb8f", high = "#ef0300",
+                       midpoint = mean(chicago_map$disease_burden, na.rm = TRUE),
+                       na.value = "black", name = NA) +
+  theme_void() +
+  theme(plot.title = element_text(size = 14, color = "#7b4419", face = "bold", hjust = 0.5)) +
+  labs(title = "Overall Disease Burden by Community Area")
+
+ggplotly(disease_burden, tooltip = "text") %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+## Row {data-height="120"}
+
+### Highest Overall Burden
+
+```{r}
+top_burden <- chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(disease_burden)) %>%
+  slice_max(disease_burden, n = 1)
+
+valueBox(
+  value = paste0(round(top_burden$disease_burden, 1), "%"),
+  caption = paste0("Highest Overall Burden — ", top_burden$community),
+  icon = "fa-location-dot",
+  color = "#7b4419"
+)
+```
+
+### Lowest Overall Burden
+
+```{r}
+bot_burden <- chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(disease_burden)) %>%
+  slice_min(disease_burden, n = 1)
+
+valueBox(
+  value = paste0(round(bot_burden$disease_burden, 1), "%"),
+  caption = paste0("Lowest Overall Burden — ", bot_burden$community),
+  icon = "fa-location-dot",
+  color = "#48bea1"
+)
+```
+
+### Highest Hardship Index
+
+```{r}
+top_hardship <- chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(hard_index)) %>%
+  slice_max(hard_index, n = 1)
+
+valueBox(
+  value = round(top_hardship$hard_index, 1),
+  caption = paste0("Highest Hardship — ", top_hardship$community),
+  icon = "fa-location-dot",
+  color = "#ed4a1a"
+)
+```
+
+### Lowest Hardship Index
+
+```{r}
+bot_hardship <- chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(hard_index)) %>%
+  slice_min(hard_index, n = 1)
+
+valueBox(
+  value = round(bot_hardship$hard_index, 1),
+  caption = paste0("Lowest Hardship — ", bot_hardship$community),
+  icon = "fa-location-dot",
+  color = "#167b2b"
+)
+```
+## Row {data-height="450"}
+
+### Racial Determinants of Disease Burden and Hardship
+
+``` {r scatterplot disease burden vs hardship with percent white}
+scatter <- ggplot(chicago_map, aes(x = hard_index, y = disease_burden, 
+                                    color = pct_white,
+                                    text = paste0("<b>", community, "</b><br>",
+                                                  "Hardship: ", round(hard_index, 1), "<br>",
+                                                  "Disease Burden: ", round(disease_burden, 1), "%<br>",
+                                                  "% White: ", round(PCT.W_2020.2024, 1), "%"))) +
+  geom_point(size = 3) +
+  geom_smooth(method = "lm", color = "black") +
+  scale_color_gradient(low = "#753D12", high = "#ffffff", name = "% White") +
+  labs(x = "Hardship Index", y = "Disease Burden (%)") +
+  theme_minimal()
+
+ggplotly(scatter, tooltip = "text") %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+### Correlation Matrix
+
+```{r corr plot}
+# create a correlation matrix of all variables
+cor_matrix <- cor(cor_data %>%
+                    select(-Community)
+                  )
+
+p_cor <- ggcorrplot(cor_matrix,
+           method = "circle",
+           type = "lower",
+           lab = FALSE,
+           colors = c("red2", "white", "darkslategray"),
+           title = "Correlation Matrix") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplotly(p_cor) %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+## Row {data-height="120"}
+
+### Correlation: % White & Disease Burden
+
+```{r}
+cor_val <- cor(chicago_map$PCT.W_2020.2024, chicago_map$disease_burden, use = "complete.obs")
+
+valueBox(
+  value = round(cor_val, 2),
+  caption = "Correlation: % White & Disease Burden",
+  icon = "fa-chart-line",
+  color = "#2d4f4f"
+)
+```
+
+### Correlation: % White & Hardship
+
+```{r}
+cor_val2 <- cor(chicago_map$PCT.W_2020.2024, chicago_map$hard_index, use = "complete.obs")
+
+valueBox(
+  value = round(cor_val2, 2),
+  caption = "Correlation: % White & Hardship Index",
+  icon = "fa-chart-line",
+  color = "#ed4a1a"
+)
+```
+
+### Correlation: Hardship & Disease Burden
+
+```{r}
+cor_val3 <- cor(chicago_map$hard_index, chicago_map$disease_burden, use = "complete.obs")
+
+valueBox(
+  value = round(cor_val3, 2),
+  caption = "Correlation: Hardship & Disease Burden",
+  icon = "fa-chart-line",
+  color = "#f4bb8f"
+)
+```
+
+### Number of Neighborhoods Above Trend
+
+```{r}
+model_burden <- lm(disease_burden ~ hard_index, data = chicago_map)
+above <- sum(residuals(model_burden) > 0, na.rm = TRUE)
+
+valueBox(
+  value = above,
+  caption = "Neighborhoods Above Expected Burden",
+  icon = "fa-triangle-exclamation",
+  color = "#7b4419"
+)
+```
+
+## Row {data-height="600"}
+
+### Intra-Categorical Correlation Plot: Disease
+
+``` {r intracat corr disease plot}
+# corrplot disease
+cor_matrix_disease <- cor(cor_data %>%
+                            select(Diabetes, Obesity, Hypertension, Asthma)
+                          )
+
+#plot with ggcorrplot
+p_cor_disease <- ggcorrplot(cor_matrix_disease,
+           method = "circle",
+           type = "lower",
+           lab = FALSE,
+           colors = c("red2", "white", "darkslategray"),
+           title = "Intracategorical Correlation Among Diseases") +
+  labs(x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
+
+# ggplotly it
+ggplotly(p_cor_disease) %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+
+```
+
+### Disease vs. Environmental Factors
+
+``` {r disease v environment}
+
+# create vectors of two categories
+sub_disease <- c("Diabetes", "Obesity", "Hypertension", "Asthma")
+sub_environ <- c("Pct_White", "Air_Quality", "Traffic_Risk", "Env_Justice", "Hardship")
+
+cor_matrix2 <- cor(cor_data %>%
+                    select(all_of(c(sub_disease, sub_environ))),
+                  use = "complete.obs")
+
+p_cor_matrix2 <- ggcorrplot(cor_matrix2[sub_disease, sub_environ],
+           colors = c("darkslategray", "white", "red2")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid = element_line(color = "white", linewidth = 1))
+
+ggplotly(p_cor_matrix2) %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+### Intra-Categorical Correlation Plot: Social Determinants of Health
+
+``` {r intra corr environmental factors plot}
+cor_matrix_sdoh <- cor(cor_data %>%
+                            select(Pct_White, Air_Quality, Traffic_Risk, Env_Justice, Hardship)
+                          )
+
+p_cor_sdoh <- ggcorrplot(cor_matrix_sdoh,
+           method = "circle",
+           type = "lower",
+           lab = FALSE,
+           lab_size = 3,
+           colors = c("red2", "white", "darkslategray"),
+           title = "Intracategorical Correlation Among Social Determinants of Health") +
+  scale_x_discrete(limits = rev) +
+  scale_y_discrete(position = "right") +
+  labs(x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplotly(p_cor_sdoh) %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+
+```
+
+## Row {data-height="450"}
+
+### Diabetes Mismatch Index
+
+``` {r diabetes residual map and coef plot}
+# Fit a linear regression model diabetes ~ hardship
+dia_model <- lm(diabetes_rate ~ hard_index, data = chicago_map)
+# extract model
+dia_tbl <- tidy(dia_model, conf.int = TRUE)
+# add residuals to df
+chicago_map$residual[as.numeric(rownames(dia_model$model))] <- residuals(dia_model)
+# Remove intercept and plot pointranges (estimate + CI) with a vertical line at 0
+dia_tbl <- dia_tbl %>%
+  filter(term != "(Intercept)")
+
+# ggplot of regression
+dia_hard <- ggplot(dia_tbl, aes(x = term, y = estimate)) +
+  geom_pointrange(aes( ymin = conf.low, ymax = conf.high)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "#e03000") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Regression Coefficient with 95% CI",
+       y = "Estimate",
+       x = "Term")
+
+# plot interactive
+ggplotly(dia_hard) %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+### Diabetes Mismatch Index
+
+``` {r diabetes residuals}
+# residual tooltip
+chicago_map <- chicago_map %>%
+  filter(!is.na(diabetes_rate)) %>%
+  mutate(
+    tooltip_text = paste0(
+      "<b>", community, "</b><br>",
+      "Diabetes Rate: ", round(diabetes_rate, 1), "%<br>",
+      "Predicted: ", round(diabetes_rate - residual, 1), "%<br>",
+      "Residual: ", round(residual, 1)
+    )
+  )
+
+diabetes_resid <- ggplot(chicago_map) +
+  geom_sf(aes(fill = residual, text = tooltip_text)) +
+  scale_fill_gradient2(
+    low = "#48bea1", mid = "white", high = "#7b4419",
+    midpoint = 0, name = "Residual"
+  ) +
+  theme_minimal() +
+  labs(title = "Diabetes Mismatch Index",
+       subtitle = "Dark gray = worse than expected | Red = better than expected")
+
+ggplotly(diabetes_resid, tooltip = "text") %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+## Row {data-height="120"}
+
+### Resilient Neighborhoods
+
+```{r}
+n_resilient <- sum(chicago_map$resilient_dia == TRUE, na.rm = TRUE)
+valueBox(
+  value = n_resilient,
+  caption = "Resilient Neighborhoods",
+  icon = "fa-shield",
+  color = "#48bea1"
+)
+```
+
+### Vulnerable Neighborhoods
+
+```{r}
+n_vulnerable <- sum(chicago_map$vulnerable_dia == TRUE, na.rm = TRUE)
+valueBox(
+  value = n_vulnerable,
+  caption = "Vulnerable Neighborhoods",
+  icon = "fa-triangle-exclamation",
+  color = "#7b4419"
+)
+```
+
+### Neighborhoods Outside Expected Pattern
+
+```{r}
+n_mismatch <- sum(chicago_map$resilient_dia == TRUE | chicago_map$vulnerable_dia == TRUE, na.rm = TRUE)
+valueBox(
+  value = n_mismatch,
+  caption = "Neighborhoods Outside Expected Pattern",
+  icon = "fa-shuffle",
+  color = "#a7e831"
+)
+```
+
+### Variance in Diabetes Explained by Hardship
+
+```{r}
+valueBox(
+  value = "39%",
+  caption = "Variance in Diabetes Explained by Hardship",
+  icon = "fa-chart-line",
+  color = "#167b2b"
+)
+```
+
+## Row {data-height="450"}
+
+### Neighborhoods of Vulnerability and Resilience
+
+```{r mismatch scatterplot}
+scatter_mismatch <- ggplot(chicago_map, aes(x = hard_index, y = disease_burden,
+                                             color = category_dia,
+                                             text = paste0("<b>", community, "</b><br>",
+                                                           "Hardship: ", round(hard_index, 1), "<br>",
+                                                           "Disease Burden: ", round(disease_burden, 1), "%<br>",
+                                                           category_dia))) +
+  geom_point(size = 3) +
+  geom_vline(xintercept = median(chicago_map$hard_index, na.rm = TRUE), 
+             linetype = "dashed", color = "grey50") +
+  geom_hline(yintercept = median(chicago_map$disease_burden, na.rm = TRUE), 
+             linetype = "dashed", color = "grey50") +
+  scale_color_manual(values = c("Resilient" = "#48bea1", 
+                                "Vulnerable" = "#D10300", 
+                                "Expected" = "grey70")) +
+  labs(x = "Hardship Index", y = "Disease Burden (%)", color = NULL) +
+  theme_minimal()
+
+ggplotly(scatter_mismatch, tooltip = "text") %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+### Diabetes-Specific Vulnerability and Resilience
+
+``` {r scatterplot of diabetes vs hardship}
+scatter_diabetes <- ggplot(chicago_map, aes(x = hard_index, y = diabetes_rate,
+                                             color = category_dia,
+                                             text = paste0("<b>", community, "</b><br>",
+                                                           "Hardship: ", round(hard_index, 1), "<br>",
+                                                           "Diabetes Rate: ", round(diabetes_rate, 1), "%<br>",
+                                                           category_dia))) +
+  geom_point(size = 3) +
+  geom_vline(xintercept = median(chicago_map$hard_index, na.rm = TRUE), 
+             linetype = "dashed", color = "grey50") +
+  geom_hline(yintercept = median(chicago_map$diabetes_rate, na.rm = TRUE), 
+             linetype = "dashed", color = "grey50") +
+  scale_color_manual(values = c("Resilient" = "#48bea1", 
+                                "Vulnerable" = "#7b4419", 
+                                "Expected" = "grey70")) +
+  scale_x_discrete(limits = rev) +
+  labs(x = "Hardship Index", y = "Diabetes Rate (%)", color = NULL) +
+  theme_minimal()
+
+ggplotly(scatter_diabetes, tooltip = "text") %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+Hypertension
+=====================================
+
+Hypertension is used as a central indicator because it reflects long-term exposure to both environmental and structural conditions, making it a powerful measure of inequality across space.
+
+## Row
+
+### Data Preparation (hypertension)
+
+```{r load-data, include=FALSE}
+
+#Note: These data sets come from the Chicago Health Atlas
+
+# load data
+url3 <- "https://raw.githubusercontent.com/fitzley/miniproj2/refs/heads/main/Chi_Health_Atlas_Data(1).csv"
+health_data <- read.csv(url3)
+##### health_data <- read_csv("Chi_Health_Atlas_Data(1).csv")
+
+url4 <- "https://raw.githubusercontent.com/fitzley/miniproj2/refs/heads/main/Chicago%20Health%20Atlas%20Data%20Download%20-%20Census%20Tracts%20(2).csv"
+poverty_data <- read.csv(url4)
+
+##### poverty_data <- read_csv("Chicago Health Atlas Data Download - Census Tracts (2).csv")
+```
+
+```{r clean-data, include=FALSE}
+#Note: I selected only the variables needed for analysis.
+#Note: This reduces errors and keeps the data set focused.
+
+analysis_df <- health_data %>%
+  select(
+    community = Name,
+    lat = Latitude,
+    lon = Longitude,
+    hypertension = `HCSHYT_2023.2024`,
+    pm25 = `PMC_2020`,
+    population = `POP_2020.2024`
+  ) %>%
+  mutate(community = toupper(str_trim(community)))
+
+#Note: Cleaned poverty data for merging
+poverty_data <- poverty_data %>%
+  select(
+    community = Name,
+    poverty_rate = `POV_2020.2024`
+  ) %>%
+  mutate(community = toupper(str_trim(community)))
+
+#Note: Joined data sets
+analysis_df <- analysis_df %>%
+  left_join(poverty_data, by = "community")
+
+#Note: Ensured poverty is numeric (prevents plotting errors)
+analysis_df$poverty_rate <- readr::parse_number(analysis_df$poverty_rate)
+```
+
+
+### Environmental Exposure (hypertension)
+
+ANALYSIS
+
+PM2.5 exposure across Chicago demonstrates clear clusters of elevated pollution levels across specific neighborhoods. These areas represent communities that are consistently subjected to higher environmental risk, which can contribute to long-term health consequences. The non-random distribution of pollution suggests that environmental burden is structurally embedded within the urban landscape. This pattern raises important concerns about environmental justice and unequal exposure. On average, a PM2.5 of around 9.2 suggests moderate air quality across neighborhoods in Chicago; however a slight health risk is present for individuals sensitive to pollutants and prone to having chronic diseases. Establishing this baseline is critical for interpreting how environmental conditions shape health outcomes.
+
+
+```{r pm25_map}
+#Note: This PM2.5 map establishes environmental risk baseline
+
+pm_df <- analysis_df %>%
+  filter(!is.na(lat), !is.na(lon), !is.na(pm25))
+
+plot_ly(
+  pm_df,
+  type = "scattermapbox",
+  lat = ~lat,
+  lon = ~lon,
+  mode = "markers",
+  marker = list(
+    size = 10,
+    color = ~pm25,
+    colorscale = list(
+      c(0, sun_yellow),
+      c(0.5, sun_orange),
+      c(1, sun_red)
+    ),
+    showscale = TRUE,
+    line = list(color = dark_gray, width = 1)
+  ),
+  text = ~paste("Community:", community,
+                "<br>PM2.5:", round(pm25,2))
+) %>%
+layout(
+  mapbox = list(
+    style = "carto-positron",
+    zoom = 9,
+    center = list(lat = 41.85, lon = -87.68)
+  )
+)
+```
+
+
+## Hypertension Analysis (spatial distribution) (hypertension)
+
+ANALYSIS
+
+Hypertension exhibits strong spatial clustering across Chicago, with certain neighborhoods consistently experiencing higher rates than others such as the community in Austin with 27,500 cases recorded compared to Riverdale with 2000 recorded cases. This pattern suggests that health outcomes are shaped by localized structural conditions rather than random variation. The persistence of these clusters indicate long-term exposure to risk factors such as economic stress and limited access to healthcare. Not all high-risk areas align perfectly with pollution patterns, pointing to additional underlying influences. This reinforces the importance of area-based analysis in understanding health disparities.
+
+
+```{r mapbox-hypertension}
+#Note:It uses Plotly's Mapbox engine for smooth zooming and better aesthetics.
+
+#Note: IMPORTANT:
+#Note: filtered only necessary variables to avoid NA issues
+map_df <- analysis_df %>%
+  filter(!is.na(lat), !is.na(lon), !is.na(hypertension))
+
+#Note: Create interactive map
+plot_ly(
+  data = map_df,
+  type = "scattermapbox",
+  lat = ~lat,
+  lon = ~lon,
+  mode = "markers",
+
+  #Note: Color encodes hypertension intensity
+  marker = list(
+    size = 10,
+    color = ~hypertension,
+    colorscale = list(
+      c(0, "#FFC300"),   # yellow
+      c(0.5, "#FF7A00"), # orange
+      c(1, "#FF3B3B")    # red
+    ),
+    showscale = TRUE,
+    line = list(color = "#2F2F2F", width = 1)
+  ),
+
+  #Note: Tooltip info
+  text = ~paste(
+    "Community:", community,
+    "<br>Hypertension:", round(hypertension, 2)
+  ),
+  hoverinfo = "text"
+) %>%
+layout(
+  mapbox = list(
+    style = "carto-positron",   #Note: clean grayscale base map
+    zoom = 9,
+    center = list(lat = 41.85, lon = -87.68)
+  ),
+  margin = list(l = 0, r = 0, t = 40, b = 0),
+  title = "Spatial Distribution of Hypertension Across Chicago"
+)
+```
+
+
+## Pollution Relationship (hypertension)
+
+ANALYSIS
+
+The relationship between PM2.5 and hypertension shows a general downward trend when observing PM2.5 of 8 to 9.8, indicating that environmental exposure does slightly contribute to health risk. However, the variability around the trend line suggests that this relationship is not significant and realistic. Some neighborhoods experience higher-than-expected hypertension despite lower pollution levels. This indicates that additional structural or social factors are influencing outcomes. The results highlight the limitations of relying solely on environmental variables to explain health disparities.
+
+```{r pollution-scatter}
+#Note: This tests the expected environmental relationship.
+
+scatter_df <- analysis_df %>%
+  filter(!is.na(pm25), !is.na(hypertension))
+
+p <- ggplot(scatter_df, aes(pm25, hypertension)) +
+  geom_point(color = sun_orange, alpha = 0.7) +
+  geom_smooth(method = "lm", color = sun_red) +
+  theme_minimal()
+
+ggplotly(p)
+```
+
+
+## Mismatch Data (hypertension)
+
+ANALYSIS
+
+The mismatch index highlights where observed hypertension diverges from expected patterns based on environmental and demographic factors. These deviations are spatially clustered, indicating localized influences that are beyond pollution. Areas with high mismatch values may experience structural disadvantages that can amplify and be prone to health risk. Conversely, lower-than-expected values suggest the presence of protective community factors across the city of Chicago. This approach can help provide a deeper understanding of inequality by identifying where standard explanations fall short.
+
+
+```{r mismatch}
+#Note: Residuals capture deviation from expected outcomes.
+
+model <- lm(hypertension ~ pm25 + population, data = analysis_df)
+
+analysis_df <- analysis_df %>%
+  mutate(mismatch_index = resid(model))
+
+```
+
+
+```{r mismatch-map}
+#Note: plot is not that detailed. not how I would like to showcase the data but came across issues and decided to leave this plot as final product.
+
+mismatch_df <- analysis_df %>%
+  filter(!is.na(mismatch_index), !is.na(lat), !is.na(lon))
+
+plot_ly(
+  mismatch_df,
+  x = ~lon,
+  y = ~lat,
+  type = "scatter",
+  mode = "markers",
+  color = ~mismatch_index,
+  colors = c(sun_pink, sun_orange, sun_red)
+)
+```
+
+
+## Conclusion (hypertension)
+Hypertension across Chicago is shaped by both environmental exposure and structural inequality. While pollution contributes to risk, it does not fully explain the observed variation.
+
+The mismatch framework reveals that health outcomes are influenced by a broader set of factors, including socioeconomic conditions and neighborhood context. These findings emphasize the need for comprehensive approaches to public health. 
+
+
+## Future Directions (hypertension)
+
+Future work can expand this analysis by incorporating additional variables such as access to healthcare, green space, and community-level trust.
+
+Temporal analysis could reveal how these relationships evolve over time. More advanced spatial models may also better capture neighborhood-level effects.
+
+Understanding these dynamics more deeply can help design targeted interventions that address both environmental and structural drivers of health inequality.
+
+
+Asthma
+=====================================
+
+
+## Abstract (Asthma)
+
+**Introduction: This research aims to explore weather traffic pollution disproportionately affects some Chicago neighborhoods more than others. According to the American Lung Association previous findings have revealed there are correlations between air quality/pollution and health outcomes in the city of Chicago, predominantly affecting densely populated, disadvantaged areas. Based on this research, we hypothesize neighborhoods with higher levels of environmental burden will be more prone to higher asthma levels.**
+
+**Methods: Descriptive analysis was used in order to conduct data exploration research on Chicago pollution metrics and their correlation to health outcomes. Data from the Chicago Health Atlas and Chicago Housing Authority was used in order to create four figures using R Studio, packages include: ggplot, tidyverse, janitor, and plotly. Figures used included a leaflet map, mismatch graph, standard plot and environmental burden plot. Graph interpretation was used in order to conduct results.**
+
+
+## Data Preparation (Asthma)
+```{r}
+#Note: Loaded data.
+url5 <- "https://raw.githubusercontent.com/fitzley/miniproj2/refs/heads/main/Chi_Health_Atlas_Data.csv"
+health_data <- read.csv(url5) %>%
+  clean_names()
+
+####health_data <- read_csv("Chi_Health_Atlas_Data.csv") %>%
+####  clean_names()
+
+#Note: Filtered through the only columns we needed."Name" includes the name of each neighborhood, "HCSATH_2023-2024" showcases the asthma and burden outcomes for each neighborhood, this data set will be used to showcase real health outcomes. "HCSATH_2023-2024" showcases the environmental burden caused by traffic which is used as a predictor of pollution to show expected health outcomes.
+asthma_plot <- health_data %>%
+  select(name,
+    asthma = hcsath_2023_2024,
+    pollution = trf_2020
+  )
+```
+
+
+## Figure 1: Leaflet Map of Asthma Burden of Chicago (asthma)
+
+
+
+**The leaflet map sets the baseline data that shows where asthma is distributed in the city. This map is interactive and represents the prevalence of asthma in 72 Chicago neighborhoods. Asthma concentration is represented in large yellow circles which decrease in size and gradience from dark green (greater concentrations) to light green (lower concentrations). Viewers can zoom into specific neighborhoods and hover over them to reveal neighborhood name, asthma prevalence and traffic pollution levels. This map helps us identify spatial distribution of asthma throughout the city. It also helps us identify weather there is a correlation among pollution and asthma for specific neighborhoods. The map shows us asthma levels have a relatively even distribution in the city of Chicago with some higher concentrations on the northside such as Lakeview and Albany Park. However, there is no clear relationship between traffic pollution and asthma prevalence as these factors vary throughout neighborhoods.** 
+
+```{r}
+#### redundant so commented
+# #Note: Loaded data and cleaned it.
+# health_data <- read_csv("Chi_Health_Atlas_Data.csv") %>%
+#   clean_names()
+
+#Note: Included the variables needed for the map.
+map_data <- health_data %>%
+  select(
+    name,
+    latitude,
+    longitude,
+    asthma = hcsath_2023_2024,
+    pollution = trf_2020
+  ) %>%
+  drop_na()
+
+#Note: Created a green palette with various hues based on asthma prevalence, including my color choice for the project. 
+pal <- colorNumeric(
+  palette = c("#e8f5e9", "#a5d6a7", "#43a047", "#1b5e20"),
+  domain = map_data$asthma
+)
+
+#Note: Built interactive asthma distribution plot using the map of Illinois and surrounding areas, making 72 Chicago neighborhoods interactive.
+leaflet(map_data) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  #Note: Added grey background to emphasize neighborhoods, added neighborhood markers as well as longitude and latitude to map points to their correct location.
+  addCircleMarkers(
+    lng = ~longitude,
+    lat = ~latitude,
+    #Note: Used scale and gradience to ensure neighborhoods with larger/darker concentrations of of asthma would have larger interactive circles.
+    radius = ~rescale(asthma, to = c(6, 18)),
+    fillColor = ~pal(asthma),
+    #Note: Customized the circles color, weight and stroke.
+    fillOpacity = 0.9,
+    color = "black",
+    weight = 1,
+    stroke = TRUE,
+    #Note: Groups markers/circles together when zooming out and separate when zooming in. The legend also matches the color palette from above and matches data set.
+     clusterOptions = markerClusterOptions(),
+    popup = ~paste0(
+      "<b>", name, "</b><br>",
+      "Asthma prevalence: ", round(asthma, 2), "<br>",
+      "Traffic pollution: ", round(pollution, 2)
+    )
+  ) %>%
+  addLegend(
+    "bottomright",
+    pal = pal,
+    values = ~asthma,
+    title = "Asthma prevalence",
+    opacity = 0.9
+  )
+```
+
+
+## Figure 2: Mismatch Graph of Pollution Risk (asthma)
+
+
+
+**Descrption: This graph was created in order to compare the expected health outcomes for 77 Chicago neighborhoods based on the environmental pollution outcomes to real asthma levels. Expected Asthma levels were showcased using the traffic burden data set on top where lime green represents positive values (>0) that matched expected outcomes. The bottom showcases resilient neighborhoods that did not match expected outcomes in the negative value range (<0) in dark green. Grey circles represent exactly where outcomes match expectations. The tooltip function helps the viewer see data on individual plot points. This is helpful due to our large data set. By hovering over each point, the viewer is able to directly verify the mismatch and confirm information.**
+
+**Analysis :The graph suggests health outcomes for asthma are have a low-moderate correlation to traffic related pollution as there is a general positive trend with a few positive outliers such as Lakeview and Austin. However, there is variability in the dataset which could mean multiple factors contribute to asthma outcomes.**
+
+
+
+```{r, fig.height=20, fig.width=12}
+#Note: loaded the data into R.
+health_data <- read.csv(url5)
+
+# Note: Filtered the data set to only the necessary columns, I renamed the asthma and pollution variables to create simpler names and I removed neighborhoods missing asthma or pollution data using "drop_na".
+asthma_plot <- health_data %>%
+  select(
+    Name,
+    asthma = HCSATH_2023.2024,
+    pollution = TRF_2020
+  ) %>%
+  drop_na()
+
+# Note: Created a linear model that predicts asthma from pollution based on the traffic burden, predicting what asthma should look like. Created a custom string for each plot point in order to incorporate interactivity, used tooltip in order to display data when hovering.
+mismatch_model <- lm(asthma ~ pollution, data = asthma_plot)
+
+asthma_plot <- asthma_plot %>%
+  mutate(
+    expected_asthma = predict(mismatch_model),
+    mismatch = asthma - expected_asthma,
+    category = case_when(
+      mismatch > 0 ~ "More vulnerable than expected",
+      mismatch < 0 ~ "More resilient than expected",
+      TRUE ~ "About as expected"
+    )
+  ) %>%
+  arrange(mismatch) %>%
+  mutate(
+    Name = factor(Name, levels = Name),
+    hover_text = paste(
+      "Neighborhood:", Name,
+      "<br>Asthma:", round(asthma, 2),
+      "<br>Expected asthma:", round(expected_asthma, 2),
+      "<br>Mismatch:", round(mismatch, 2),
+      "<br>Traffic burden:", round(pollution, 2),
+      "<br>Category:", category
+    )
+  )
+
+#Note: Created the graph, making x=mismatch value and y=neighborhood name, the fill showcases the resilience/vulnerability category.
+p <- ggplot(asthma_plot, aes(x = mismatch, y = Name, fill = category, text = hover_text)) +
+  
+  # Note: Created horizontal bars for each neighborhood and made thinner bars in order to reduce crowding.
+  geom_col(width = 0.5) +
+  
+  # Note: Added a vertical dashed line at 0 to separate higher than expected from lower than expected.
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.7, color = "black") +
+  
+  # Note: Included points based on pollution burden to see the amount of traffic burden in each neighborhood.
+  geom_point(aes(size = pollution, text = hover_text), color = "black", alpha = 0.65) +
+  
+  # Note: Added white space to prevent crowding on the x-axis bars.
+  scale_x_continuous(expand = expansion(mult = c(0.08, 0.12))) +
+  
+  # Note: Chose my custom color theme to represent each category.
+  scale_fill_manual(values = c(
+    "More vulnerable than expected" = "#92F96A",
+    "More resilient than expected" = "#74AC64",
+    "About as expected" = "gray70"
+  )) +
+  
+  # Note: Added titles to each axis, legends, main title and subtitle.
+  labs(
+    title = "Asthma Burden Beyond Expected Pollution Risk in Chicago",
+    subtitle = "Positive values show neighborhoods with higher asthma than predicted from traffic-related pollution burden",
+    x = "Asthma mismatch (actual - expected)",
+    y = NULL,
+    fill = NULL,
+    size = "Traffic burden"
+  ) +
+  
+  # Note: Used a minimal theme and customized multiple elements in order to improve readability and avoid crowding.
+geom_col(width = 0.4) +
+
+scale_y_discrete(expand = expansion(mult = c(0.02, 0.02))) +
+
+theme_minimal(base_size = 12) +
+theme(
+  panel.grid.major.y = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+  plot.subtitle = element_text(size = 11, hjust = 0.5),
+  axis.text.y = element_text(size = 11),
+  axis.text.x = element_text(size = 11),
+  legend.title = element_text(size = 11),
+  legend.text = element_text(size = 10),
+  plot.margin = margin(15, 20, 15, 15)
+)
+#Note: Converted static ggplot into an interactive plot by including the tooltip feature.
+ggplotly(p, tooltip = "text")
+
+```
+
+
+## Figure 3: Standard Scatter Plot of Asthama vs Traffic Pollution (asthma)
+
+
+
+**Description: The graph demonstrates the relationship between traffic-related pollution and prevalence of asthma across 77 Chicago neighborhoods. The x-axis represents traffic-related pollution and the y-axis represents the percentage of adults with asthma (prevalence). The color gradient increases in hue to a darker green in correlation to higher pollution levels. The dashed lines represent city averages which divide the plot into four quadrants. Each plot point represents a specific Chicago neighborhood and a tooltip feature was used in order to showcase interactivity. Each plot point tells the viewer what neighborhood they are looking at, as well as the asthma and pollution levels.**
+
+**Analysis: Overall, there is a general positive relationship in the data as plot points are scattered at an upwards direction, suggesting pollution could contribute to asthma levels. However, plot-points do not emphasize a linear relationship and are scattered, meaning there could be other contributing factors to asthma levels. Furthermore, the quadrants on the graph help reveal patterns, the top right quadrant show expected burden. The top left, unexpected vulnerability, bottom right: resilience and bottom left: highest resilience. Some outliers are observed but there is no clear pattern. In conclusion, the graph helps the viewer see vulnerability patterns beyond environmental exposure.**
+
+
+```{r}
+#Note: Loaded the data set and cleaned column names using the janitor package. 
+health_data <- health_data %>%
+  clean_names()
+
+#Note: Selected only the variables needed for the graph. 
+plot_data <- health_data %>%
+  select(
+    name,
+    asthma = hcsath_2023_2024,
+    pollution = trf_2020
+  ) %>%
+  drop_na()
+
+#Note: Calculated averages for asthma and pollution across the city.
+avg_asthma <- mean(plot_data$asthma, na.rm = TRUE)
+avg_pollution <- mean(plot_data$pollution, na.rm = TRUE)
+
+# Note: Created the base ggplot and added the x and y axes.
+p <- ggplot(
+  plot_data,
+  aes(
+    x = pollution,
+    y = asthma,
+    color = pollution,
+    text = paste(
+      "Neighborhood:", name,
+      "<br>Pollution:", round(pollution, 2),
+      "<br>Asthma:", round(asthma, 2)
+    )
+  )
+) +
+  
+  #Note: Plotted each neighborhood as a seperate data point. 
+  geom_point(size = 3, alpha = 0.85) +
+  
+  #Note: Added dashed reference lines at city averages
+  geom_vline(xintercept = avg_pollution, linetype = "dashed", color = "gray40") +
+  geom_hline(yintercept = avg_asthma, linetype = "dashed", color = "gray40") +
+  
+  #Note: Used my custom green gradient colors instead of category colors
+  scale_color_gradientn(
+    colors = c("#dff3e3", "#9bd49f", "#4caf50", "#1b5e20"),
+    name = "Traffic Pollution"
+  ) +
+  
+  #Note: Added axes titles, main title and labels, kept minimal theme.
+  labs(
+    title = "Asthma vs Traffic Pollution in Chicago Neighborhoods",
+    x = "Traffic Pollution",
+    y = "Asthma Prevalence"
+  ) +
+  
+
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 15, hjust = 0.0),
+    axis.title = element_text(size = 12),
+    legend.position = "right"
+  )
+
+#Note: Used a tooltip to make plot interactive.
+ggplotly(p, tooltip = "text")
+```
+
+
+## Figure 4: Environmental Justice Burden Plot (asthma)
+
+
+**Description: The graph showcases the relationship between the environmental justice burden of asthma and asthma mismatch rates. The graph plots environmental justice burden and asthma on the x-axis and asthma mismatch on the y-axis. Asthma mismatch is determined by actual minus expected asthma levels based on traffic pollution. The graph aims to explore weather certain neighborhoods are vulnerable and disproportionately affected by asthma. Neighborhoods over the dotted line (0>) have a higher than expected asthma level despite traffic pollution. Neighborhoods under the dotted line (<0) more resilient than expected asthma rates. The graph also includes an interactive feature that allows the viewer to hover over a specific neighborhood to see neighborhood name, environmental justice burden, mismatch score, asthma prevalence and pollution levels.** 
+
+**Analysis: This graph suggests a slight positive relationship between higher levels of EJ burden and positive mismatch yields. However, variability still exists in the graph and distribution appears mostly even. It is possible, neighborhood plays a role into asthma levels.**
+
+
+```{r}
+#Note: Loaded and cleaned data set.
+#### health_data <- read_csv("Chi_Health_Atlas_Data.csv") %>%
+####  clean_names()
+
+#Note: Selected only the variables required for the graph. 
+plot_data <- health_data %>%
+  select(
+    name,
+    asthma = hcsath_2023_2024,
+    pollution = trf_2020,
+    ej_burden = chaknkc_2023
+  ) %>%
+  drop_na()
+
+#Note: Incorporated mismatch model to calculate expected asthma levels based on traffic pollution.
+mismatch_model <- lm(asthma ~ pollution, data = plot_data)
+
+#Note: Calculated mismatch and categorized neighborhoods.
+plot_data <- plot_data %>%
+  mutate(
+    expected_asthma = predict(mismatch_model),
+    mismatch = asthma - expected_asthma,
+    category = case_when(
+      mismatch > 0 ~ "More vulnerable than expected",
+      mismatch < 0 ~ "More resilient than expected",
+      TRUE ~ "About as expected"
+    ),
+    hover_text = paste(
+      "Neighborhood:", name,
+      "<br>EJ burden:", ej_burden,
+      "<br>Mismatch:", round(mismatch, 2),
+      "<br>Asthma:", round(asthma, 2),
+      "<br>Pollution:", round(pollution, 2),
+      "<br>Category:", category
+    )
+  )
+
+#Note: Created the mismatch plot.
+p <- ggplot(plot_data,
+            aes(x = ej_burden, y = mismatch,
+                color = category,
+                text = hover_text)) +
+  
+  #Note: Plotted points for each neighborhood.
+  geom_point(size = 3, alpha = 0.8) +
+  
+  #Note: Added regression line to show overall trend
+  geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.8) +
+  
+  #Note: Added the dashed horizontal line at zero to create the mismatch.
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  
+  #Note:Used custom green color scheme.
+  scale_color_manual(values = c(
+    "More vulnerable than expected" = "#2e7d32",
+    "More resilient than expected" = "#81c784",
+    "About as expected" = "gray70"
+  )) +
+  
+  #Note: Added axis labels, a title, legends and subtitles, kept minimal theme.
+  labs(
+    title = "Environmental Justice Burden and Asthma Mismatch",
+    subtitle = "Exploring whether vulnerable neighborhoods face disproportionate health impacts",
+    x = "Environmental Justice Burden",
+    y = "Asthma Mismatch (Actual - Expected)",
+    color = "Category"
+  ) +
+  
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(size = 11, hjust = 0.5),
+    legend.position = "bottom"
+  )
+
+#Note: Converted to interactive by incorporating a tooltip.
+ggplotly(p, tooltip = "text")
+```
+
+
+
+## Conclusion (asthma)
+
+**Overall, I wanted to show the relationship between pollution and asthma levels. I aimed to explore weather asthma cases were higher based on traffic pollution and how these rates affect environmental burden. My first graph is a leaflet map that showcases asthma prevalence in the Chicagoland area. This figure showed some higher concentrations of asthma in the northern region, however these differences were not significant. I made this map to establish baseline levels of asthma prevalence throughout the city. The second figure was a mismatch graph made to see weather certain neighborhoods experience higher or lower expected levels of asthama based on traffic pollution. The findings revealed the same neighborhoods with higher levels of asthma on figure 1 were the same neighborhoods with more vulerability than expected: Lakeview, Austin, Albany Park. There was a slight positive correlation between asthma levels and pollution with some variability. Figure 3 is a scatter plot with dashed lines that indicate city-averages between traffic-related pollution and asthma prevalence. This figure shows weather asthma tends to increase as pollution increases to establish a baseline relationship between the two variables. Findings reveal the same outliers as previous figures have higher asthma levels than pollution levels. This suggests pollution does not fully explain asthma outcomes. The final figure (4) attempts to uncover weather environmental justice predicts weather a neighborhood will have higher or lower asthma levels than expected. The findings reveal there is no strong pattern between the two variables as points are widely scattered with a few outliers. For example the neighborhood of Lakeview has low environmental justice burden but a high positive mismatch, the neighborhood of Austin has a high environmental burden, and high positive mismatch. These random variations reveal no real pattern between the two. In conclusion, there is no real correlation between asthma traffic pollution and asthma levels. However, there are a few neighborhoods that are disproportionately affected for unknown reasons which could be potentially attributed to traffic pollution. The results suggest further analyses needs to be conducted in order to reveal asthma causation.** 
+
+
+
+
+Diabetes
+=====================================
+
+# PART 1: SETUP + DATA CLEANING
+
+
+```{r}
+# Define pink/purple color palette for consistency.
+pink_purple <- c("#FF4FA3","#C77DFF", "#7B2CBF", "#3A0CA3")
+
+# Load in dataset:
+df <- read.csv(url5)
+
+#### df <- read.csv("Chi_Health_Atlas_Data (1).csv")
+
+# Clean dataset: remove missing values for important variables 
+df_clean <- df %>%
+  filter(!is.na(TRF_2020),
+         !is.na(HCSDIA_2023.2024),
+         !is.na(PMC_2020),
+         !is.na(CHAKNKC_2023))
+```
+
+## INSPECTING THE DATA
+
+```{r data-check}
+# Inspect dataset:
+colnames(df)
+head(df)
+str(df)
+summary(df)
+```
+
+The dataset includes 77 Chicago community areas with 23 variables describing population, environmental exposure, and health outcomes. Initial inspection shows that diabetes is recorded as counts rather than rates, meaning that values are influenced by population size. There is also variation in environmental exposure and environmental justice burden across neighborhoods, suggesting that both environmental and stucture factors differ across the city of Chicago, and may contribute to uneven health outcomes. 
+
+
+## PART 3: VISUALIZATION 1: EXPECTATION (diabetes)
+
+Analysis
+
+The expectation is that higher environmental exposure will lead to worse health outcomes, specifically higher diabetes prevalence. However, the observed relationship is weak and does not show a clear trend, suggesting that environmental exposure alone may not fully explain patterns in diabetes across neighborhoods. 
+
+```{r visualization 1}
+# VISUALIZATION 1: EXPECTATION
+# Hypothesis: Higher environmental exposure -> worse health
+# Specifically: Traffic risk should increase diabetes prevalence
+
+ggplot(df_clean, aes(
+  x = TRF_2020,
+  y = HCSDIA_2023.2024
+)) +
+  geom_point(color = "#C77DFF",
+             size = 3,
+             alpha = 0.7
+            ) +
+            geom_smooth(
+              method = "lm",
+              color = "#7B2CBF"
+            ) +
+            scale_x_log10() +
+            labs(
+              title = "Expectation: Environmental Risk Predicts Diabetes",
+              x = "Traffic Risk (Environmental Exposure)",
+              y = "Diabetes Prevalence(%)"
+            ) +
+            theme_minimal(base_family = "Times New Roman")
+```
+
+
+## PART 4: VISUALIZATION 2: REALITY (MULTI-LAYERED APPROACH) (diabetes)
+
+Analysis
+
+When additional variables are included in the model, the relationship between exposure and health becomes more complex. Park access and environmental justice burden add important context, but patterns still remain inconsistent. This suggests that health outcomes are shaped by multiple interacting environmental and structural variables.
+
+
+```{r visualization 2}
+# VISUALIZATION 2: REALITY 
+# Goal: Show that the relationship is more complex
+# Adds multiple variables: park access + environmental justice burden
+df_clean <- df_clean %>%
+  mutate(
+    diabetes_rate = (HCSDIA_2023.2024 / Population) * 100
+  )
+
+p <- ggplot(df_clean, aes(
+  x = TRF_2020,
+  y = diabetes_rate,
+  color = PMC_2020,
+  size = CHAKNKC_2023,
+  text = paste(
+    "Neighborhood:", Name,
+    "<br>Traffic Risk:", TRF_2020,
+    "<br>Diabetes (%):", round(diabetes_rate, 2),
+    "<br>Park Access:", PMC_2020,
+    "<br>Env. Justice:", CHAKNKC_2023
+  )
+)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", color = "#3A0CA3", se=FALSE) +
+  scale_color_gradientn(
+    colors = pink_purple,
+    name = "Park Access (Higher = More Green Space)"
+  ) +
+  scale_size(
+    range = c(4, 14),
+    name = "Environmental Justice Burden (Higher = More Exposure)"
+  ) +
+  scale_x_log10() + 
+  labs(
+    title = "Reality: Environmental Exposure Alone Does Not Explain Diabetes Patterns",
+    x = "Traffic Risk (log scale)",
+    y = "Diabetes Prevalence (%)"
+  ) +
+  theme_minimal(base_family = "Times New Roman")
+
+ggplotly(p, tooltip = "text")
+```
+
+
+## PART 5: VISUALIZATION 3: MISMATCH INDEX (PRIMARY ANALYSIS) (diabetes)
+
+Analysis
+
+The mismatch index captures the difference between observed and expected diabetes outcomes based on environmental exposure. This reveals neighborhoods where diabetes prevalence is lower or higher than originally predicted. These deviations highlight areas of vulnerability and resilience that cannot be explained by exposure alone, showcasing that additional structural factors influence health outcomes. 
+
+```{r visualization 3}
+# VISUALIZATION 3: MISMATCH INDEX 
+# Goal: Identify where pollution fails to predict diabetes
+# Method: Use regression residuals as a mismatch index
+model <- lm(HCSDIA_2023.2024 ~ TRF_2020, data = df_clean)
+
+df_clean <- df_clean %>%
+  mutate(mismatch = resid(model))
+
+ggplot(df_clean, aes(
+  x = TRF_2020,
+  y = mismatch,
+  color = mismatch
+)) +
+  geom_point(size = 4, alpha = 0.9) + 
+  scale_color_gradient2(
+    low = "#FF4FA3",
+    mid = "#C77DFF",
+    high = "#3A0CA3",
+    midpoint = 0,
+    name = "Mismatch Index"
+) +
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed",
+) + 
+  labs(
+    title = "Mismatch Index: Where Pollution Fails to Predict Diabetes",
+    x = "Traffic Risk",
+    y = "Mismatch (Observed - Expected Diabetes)"
+  ) +
+  theme_minimal(base_family = "Times New Roman")
+```
+
+
+## PART 6: IDENTIFYING EXTREME CASES (diabetes)
+
+Analysis
+
+Identifying neighborhoods with the most extreme mismatch values highlights patterns of inequality. Some areas show much higher diabetes prevalence than expected, indicating additional risk factors beyond environmental exposures. Other areas performed better than expected, demonstrating that both environmental and social factors influence health outcomes. 
+
+
+```{r identifying extreme cases}
+# Highlights: Neighborhoods with strongest mismatch
+# Helps identify resilience vs vulnerability 
+
+ggplot(df_clean, aes(
+  x = TRF_2020,
+  y = mismatch,
+  label = Name
+)) +
+  geom_point(color = "#C77DFF", size = 3) +
+  geom_text_repel(size = 3) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_minimal(base_family = "Times New Roman")
+```
+
+
+
+
+
+## PART 7: FINAL TAKEAWAY
+
+Overall, when analyzing the clean and transformed data, diabetes patterns across Chicago are not fully explained by environmental exposure alone. While pollution is an important variable, it does not consistently predict health outcomes. The mismatch index calculated in Part 5 reveals that socioeconomic conditions also play a critical role, emphasizing the importance of considering multiple variables of multiple types when studying health disparities.
+
+
+## PART 8: Session info
+
+
+```{r}
+sessionInfo()
+```
+
+
+
+
