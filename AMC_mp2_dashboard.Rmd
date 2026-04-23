@@ -1,0 +1,672 @@
+---
+title: "Mismatch Index: When Environment, Health, and Wealth Don't Align"
+author: "Mini Project 2"
+date: "`r Sys.Date()`"
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+    source_code: embed
+    toc: true
+    theme:
+      version: 4
+      bootswatch: flatly
+      primary: "#ed4a1a"
+      secondary: "#48bea1"
+      base_font:
+        google: "Source Sans Pro"
+      heading_font:
+        google: "Montserrat"
+---
+
+```{css}
+/* I am putting this chunk here in case I need to create a functional knitr::kable() table */
+.chart-wrapper {
+  overflow-y: auto;
+}
+
+/* set a custom font for banner */
+.navbar { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+```
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+# load packages
+library(tidyverse)
+library(broom)
+library(plotly)
+library(flexdashboard)
+library(DT)
+library(sf)
+library(ggplot2)
+library(dplyr)
+library(ggcorrplot)
+library(patchwork)
+
+# load data
+url <- "https://raw.githubusercontent.com/fitzley/miniproj2/refs/heads/main/health_data.csv"
+health_data <- read.csv(url)
+
+# read shapefile of Chicago
+chicago_sf <- st_read("https://raw.githubusercontent.com/fitzley/miniproj2/refs/heads/main/chi_comm_areas.geojson", quiet = TRUE)
+
+# join health data with shapefile
+chicago_map <- chicago_sf %>%
+  left_join(health_data %>%
+              mutate(GEOID = as.character(GEOID)), by = c("area_numbe" = "GEOID"))
+
+# pull hardship index from most recent census data from github repository
+url2 <- "https://raw.githubusercontent.com/fitzley/miniproj2/refs/heads/main/h_index.csv"
+h_index <- read.csv(url2) %>%
+  slice(-1, ) # remove first row
+
+# join hardship index to health + map data
+chicago_map <- chicago_map %>%
+  left_join(h_index %>% select(GEOID, `HDX_2020.2024`) %>% mutate(GEOID = as.character(GEOID), `HDX_2020.2024` = as.numeric(`HDX_2020.2024`)), by = c("area_numbe" = "GEOID"))
+
+# transform data into percents
+chicago_map <- chicago_map %>%
+  mutate(
+    diabetes_rate = HCSDIA_2023.2024 / Population * 100,
+    obesity_rate = HCSOB_2023.2024 / Population * 100,
+    hypertension_rate = HCSHYT_2023.2024 / Population * 100,
+    asthma_rate = HCSATH_2023.2024 / Population * 100,
+    hard_index = HDX_2020.2024,
+    pct_white = PCT.W_2020.2024,
+    disease_burden = rowMeans(cbind(diabetes_rate, obesity_rate, hypertension_rate, asthma_rate), na.rm = TRUE)
+  ) %>% # add resilience and vulnerability scores
+  mutate(
+    resilient = hard_index > quantile(hard_index, 0.5, na.rm = TRUE) &
+                disease_burden < quantile(disease_burden, 0.5, na.rm = TRUE),
+    vulnerable = hard_index < quantile(hard_index, 0.5, na.rm = TRUE) &
+                 disease_burden > quantile(disease_burden, 0.5, na.rm = TRUE)
+  ) %>% # add diabetes specific resilience and vulnerability scores
+  mutate(
+    resilient_dia = hard_index > quantile(hard_index, 0.5, na.rm = TRUE) &
+                    diabetes_rate < quantile(diabetes_rate, 0.5, na.rm = TRUE),
+    vulnerable_dia = hard_index < quantile(hard_index, 0.5, na.rm = TRUE) &
+                     diabetes_rate > quantile(diabetes_rate, 0.5, na.rm = TRUE),
+    category_dia = case_when(
+      resilient_dia == TRUE ~ "Resilient",
+      vulnerable_dia == TRUE ~ "Vulnerable",
+      TRUE ~ "Expected"
+    )
+  )
+
+# remove Fuller Park and Burnside - raw number data do not match CHI Atlas rates, suspected data quality issue
+chicago_map <- chicago_map %>%
+  filter(!community %in% c("FULLER PARK", "BURNSIDE"))
+
+# set up cor data
+cor_data <- chicago_map %>%
+  st_drop_geometry() %>%
+  select(
+    Diabetes = diabetes_rate,
+    Obesity = obesity_rate,
+    Hypertension = hypertension_rate,
+    Asthma = asthma_rate,
+    Pct_White = PCT.W_2020.2024,
+    Air_Quality = CHASBQJ_2023.2024,
+    Traffic_Risk = TRF_2020,
+    Env_Justice = CHAKNKC_2023,
+    Hardship = hard_index,
+    Community = Name
+  ) %>%
+  drop_na()
+
+# make custom color palettes
+palette1 <- c("#2e4f4f", "#0f6340", "#3f6d12", "#6f6e00", "#976000", "#c95500", "#ff0000")
+
+palette2 <- c("#2f4f4f", "#736e00", "#ed4a1a", "#ff7e5d", "#ffb198", "#ffdacd", "#ffffff")
+
+palette3 <- c("#2d4f4f", "#ef0300", "#48bea1", "#167b2b", "#a7e831", "#7b4419", "#f4bb8f")
+```
+
+## Row {data-height="400"}
+
+### Disease Burden by Community Area
+
+```{r disease maps, echo=FALSE, out.width="100%", results='asis'}
+# create chloropleth function
+make_map <- function(var, title, midpt) {
+  ggplot(chicago_map) +
+    geom_sf(aes(fill = .data[[var]],
+                text = paste0("<b>", Name, "</b><br>",
+                              title, ": ", round(.data[[var]], 1), "%"))) +
+    scale_fill_gradient2(low = "#2e4f4f",
+                         mid = "#f4bb8f",
+                         high = "#ff0000",
+                         midpoint = midpt,
+                         na.value = "black",
+                         name = "% Adults") +
+    theme_void() +
+    theme(legend.position = "none")
+}
+
+# construct maps
+pd <- make_map("diabetes_rate", "Diabetes", mean(chicago_map$diabetes_rate, na.rm = TRUE))
+po <- make_map("obesity_rate", "Obesity", mean(chicago_map$obesity_rate, na.rm = TRUE))
+ph <- make_map("hypertension_rate", "Hypertension", mean(chicago_map$hypertension_rate, na.rm = TRUE))
+pa <- make_map("asthma_rate", "Asthma", mean(chicago_map$asthma_rate, na.rm = TRUE))
+
+# generate interactive maps of spatial patterns of disease
+pd2 <- ggplotly(pd, tooltip = "text") %>% layout(autosize = TRUE)
+po2 <- ggplotly(po, tooltip = "text") %>% layout(autosize = TRUE)
+ph2 <- ggplotly(ph, tooltip = "text") %>% layout(autosize = TRUE)
+pa2 <- ggplotly(pa, tooltip = "text") %>% layout(autosize = TRUE)
+
+# arrange plots in a line
+subplot(pd2, po2, ph2, pa2, nrows = 1) %>%
+  layout(
+    autosize = TRUE,
+    annotations = list(
+      list(x = 0.125, y = 1.0, text = "<b>Diabetes</b>",
+           showarrow = FALSE, xref = "paper", yref = "paper", xanchor = "center",
+           font = list(size = 14, color = "#7b4419")),
+      list(x = 0.375, y = 1.0, text = "<b>Obesity</b>",
+           showarrow = FALSE, xref = "paper", yref = "paper", xanchor = "center",
+           font = list(size = 14, color = "#7b4419")),
+      list(x = 0.625, y = 1.0, text = "<b>Hypertension</b>",
+           showarrow = FALSE, xref = "paper", yref = "paper", xanchor = "center",
+           font = list(size = 14, color = "#7b4419")),
+      list(x = 0.875, y = 1.0, text = "<b>Asthma</b>",
+           showarrow = FALSE, xref = "paper", yref = "paper", xanchor = "center",
+           font = list(size = 14, color = "#7b4419"))
+    )
+  ) %>%
+  config(displayModeBar = FALSE)
+```
+
+## Row {data-height="120"}
+
+### Mean Diabetes Rate
+
+```{r}
+valueBox(
+  value = paste0(round(mean(chicago_map$diabetes_rate, na.rm = TRUE), 1), "%"),
+  caption = "Mean Diabetes Rate",
+  icon = "fa-droplet",
+  color = "#2d4f4f"
+)
+```
+
+### Mean Obesity Rate
+
+```{r}
+valueBox(
+  value = paste0(round(mean(chicago_map$obesity_rate, na.rm = TRUE), 1), "%"),
+  caption = "Mean Obesity Rate",
+  icon = "fa-weight-hanging",
+  color = "#f4bb8f"
+)
+```
+
+### Mean Hypertension Rate
+
+```{r}
+valueBox(
+  value = paste0(round(mean(chicago_map$hypertension_rate, na.rm = TRUE), 1), "%"),
+  caption = "Mean Hypertension Rate",
+  icon = "fa-heart-pulse",
+  color = "#2d4f4f"
+)
+```
+
+### Mean Asthma Rate
+
+```{r}
+valueBox(
+  value = paste0(round(mean(chicago_map$asthma_rate, na.rm = TRUE), 1), "%"),
+  caption = "Mean Asthma Rate",
+  icon = "fa-lungs",
+  color = "#f4bb8f"
+)
+```
+
+## Row {data-height="600"}
+
+### Summary Table of Disease Burden
+
+```{r top diabetes neighborhoods}
+chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(diabetes_rate)) %>%
+  arrange(desc(diabetes_rate)) %>%
+  select(Community = community, Diabetes = diabetes_rate, Obesity = obesity_rate, Hypertension = hypertension_rate, Asthma = asthma_rate) %>%
+  mutate(across(where(is.numeric), ~round(., 1))) %>%
+  DT::datatable(options = list(
+  pageLength = 67,
+  dom = 't',
+  scrollY = "450px",
+  scrollCollapse = TRUE
+))
+```
+
+### Spatial Determinants of Disease Burden 
+
+``` {r chloropleth disease burden }
+# calculate mean of all disease rates
+chicago_map <- chicago_map %>%
+  mutate(disease_burden = rowMeans(cbind(diabetes_rate, obesity_rate, hypertension_rate, asthma_rate), na.rm = TRUE))
+
+# visualize on map
+disease_burden <- ggplot(chicago_map) +
+  geom_sf(aes(fill = disease_burden,
+              text = paste0("<b>", Name, "</b><br>",
+              "<b>Disease Burden:</b> ", round(disease_burden, 1), "%"))) +
+  scale_fill_gradient2(low = "#2e4f4f", mid = "#f4bb8f", high = "#ef0300",
+                       midpoint = mean(chicago_map$disease_burden, na.rm = TRUE),
+                       na.value = "black", name = NA) +
+  theme_void() +
+  theme(plot.title = element_text(size = 14, color = "#7b4419", face = "bold", hjust = 0.5)) +
+  labs(title = "Overall Disease Burden by Community Area")
+
+ggplotly(disease_burden, tooltip = "text") %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+## Row {data-height="120"}
+
+### Highest Overall Burden
+
+```{r}
+top_burden <- chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(disease_burden)) %>%
+  slice_max(disease_burden, n = 1)
+
+valueBox(
+  value = paste0(round(top_burden$disease_burden, 1), "%"),
+  caption = paste0("Highest Overall Burden — ", top_burden$community),
+  icon = "fa-location-dot",
+  color = "#7b4419"
+)
+```
+
+### Lowest Overall Burden
+
+```{r}
+bot_burden <- chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(disease_burden)) %>%
+  slice_min(disease_burden, n = 1)
+
+valueBox(
+  value = paste0(round(bot_burden$disease_burden, 1), "%"),
+  caption = paste0("Lowest Overall Burden — ", bot_burden$community),
+  icon = "fa-location-dot",
+  color = "#48bea1"
+)
+```
+
+### Highest Hardship Index
+
+```{r}
+top_hardship <- chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(hard_index)) %>%
+  slice_max(hard_index, n = 1)
+
+valueBox(
+  value = round(top_hardship$hard_index, 1),
+  caption = paste0("Highest Hardship — ", top_hardship$community),
+  icon = "fa-location-dot",
+  color = "#ed4a1a"
+)
+```
+
+### Lowest Hardship Index
+
+```{r}
+bot_hardship <- chicago_map %>%
+  st_drop_geometry() %>%
+  filter(!is.na(hard_index)) %>%
+  slice_min(hard_index, n = 1)
+
+valueBox(
+  value = round(bot_hardship$hard_index, 1),
+  caption = paste0("Lowest Hardship — ", bot_hardship$community),
+  icon = "fa-location-dot",
+  color = "#167b2b"
+)
+```
+## Row {data-height="450"}
+
+### Racial Determinants of Disease Burden and Hardship
+
+``` {r scatterplot disease burden vs hardship with percent white}
+scatter <- ggplot(chicago_map, aes(x = hard_index, y = disease_burden, 
+                                    color = pct_white,
+                                    text = paste0("<b>", community, "</b><br>",
+                                                  "Hardship: ", round(hard_index, 1), "<br>",
+                                                  "Disease Burden: ", round(disease_burden, 1), "%<br>",
+                                                  "% White: ", round(PCT.W_2020.2024, 1), "%"))) +
+  geom_point(size = 3) +
+  geom_smooth(method = "lm", color = "black") +
+  scale_color_gradient(low = "#753D12", high = "#ffffff", name = "% White") +
+  labs(x = "Hardship Index", y = "Disease Burden (%)") +
+  theme_minimal()
+
+ggplotly(scatter, tooltip = "text") %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+### Correlation Matrix
+
+```{r corr plot}
+# create a correlation matrix of all variables
+cor_matrix <- cor(cor_data %>%
+                    select(-Community)
+                  )
+
+p_cor <- ggcorrplot(cor_matrix,
+           method = "circle",
+           type = "lower",
+           lab = FALSE,
+           colors = c("red2", "white", "darkslategray"),
+           title = "Correlation Matrix") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplotly(p_cor) %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+## Row {data-height="120"}
+
+### Correlation: % White & Disease Burden
+
+```{r}
+cor_val <- cor(chicago_map$PCT.W_2020.2024, chicago_map$disease_burden, use = "complete.obs")
+
+valueBox(
+  value = round(cor_val, 2),
+  caption = "Correlation: % White & Disease Burden",
+  icon = "fa-chart-line",
+  color = "#2d4f4f"
+)
+```
+
+### Correlation: % White & Hardship
+
+```{r}
+cor_val2 <- cor(chicago_map$PCT.W_2020.2024, chicago_map$hard_index, use = "complete.obs")
+
+valueBox(
+  value = round(cor_val2, 2),
+  caption = "Correlation: % White & Hardship Index",
+  icon = "fa-chart-line",
+  color = "#ed4a1a"
+)
+```
+
+### Correlation: Hardship & Disease Burden
+
+```{r}
+cor_val3 <- cor(chicago_map$hard_index, chicago_map$disease_burden, use = "complete.obs")
+
+valueBox(
+  value = round(cor_val3, 2),
+  caption = "Correlation: Hardship & Disease Burden",
+  icon = "fa-chart-line",
+  color = "#f4bb8f"
+)
+```
+
+### Number of Neighborhoods Above Trend
+
+```{r}
+model_burden <- lm(disease_burden ~ hard_index, data = chicago_map)
+above <- sum(residuals(model_burden) > 0, na.rm = TRUE)
+
+valueBox(
+  value = above,
+  caption = "Neighborhoods Above Expected Burden",
+  icon = "fa-triangle-exclamation",
+  color = "#7b4419"
+)
+```
+
+## Row {data-height="600"}
+
+### Intra-Categorical Correlation Plot: Disease
+
+``` {r intracat corr disease plot}
+# corrplot disease
+cor_matrix_disease <- cor(cor_data %>%
+                            select(Diabetes, Obesity, Hypertension, Asthma)
+                          )
+
+#plot with ggcorrplot
+p_cor_disease <- ggcorrplot(cor_matrix_disease,
+           method = "circle",
+           type = "lower",
+           lab = FALSE,
+           colors = c("red2", "white", "darkslategray"),
+           title = "Intracategorical Correlation Among Diseases") +
+  labs(x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
+
+# ggplotly it
+ggplotly(p_cor_disease) %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+
+```
+
+### Disease vs. Environmental Factors
+
+``` {r disease v environment}
+
+# create vectors of two categories
+sub_disease <- c("Diabetes", "Obesity", "Hypertension", "Asthma")
+sub_environ <- c("Pct_White", "Air_Quality", "Traffic_Risk", "Env_Justice", "Hardship")
+
+cor_matrix2 <- cor(cor_data %>%
+                    select(all_of(c(sub_disease, sub_environ))),
+                  use = "complete.obs")
+
+p_cor_matrix2 <- ggcorrplot(cor_matrix2[sub_disease, sub_environ],
+           colors = c("darkslategray", "white", "red2")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid = element_line(color = "white", linewidth = 1))
+
+ggplotly(p_cor_matrix2) %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+### Intra-Categorical Correlation Plot: Social Determinants of Health
+
+``` {r intra corr environmental factors plot}
+cor_matrix_sdoh <- cor(cor_data %>%
+                            select(Pct_White, Air_Quality, Traffic_Risk, Env_Justice, Hardship)
+                          )
+
+p_cor_sdoh <- ggcorrplot(cor_matrix_sdoh,
+           method = "circle",
+           type = "lower",
+           lab = FALSE,
+           lab_size = 3,
+           colors = c("red2", "white", "darkslategray"),
+           title = "Intracategorical Correlation Among Social Determinants of Health") +
+  scale_x_discrete(limits = rev) +
+  scale_y_discrete(position = "right") +
+  labs(x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplotly(p_cor_sdoh) %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+
+```
+
+## Row {data-height="450"}
+
+### Diabetes Mismatch Index
+
+``` {r diabetes residual map and coef plot}
+# Fit a linear regression model diabetes ~ hardship
+dia_model <- lm(diabetes_rate ~ hard_index, data = chicago_map)
+# extract model
+dia_tbl <- tidy(dia_model, conf.int = TRUE)
+# add residuals to df
+chicago_map$residual[as.numeric(rownames(dia_model$model))] <- residuals(dia_model)
+# Remove intercept and plot pointranges (estimate + CI) with a vertical line at 0
+dia_tbl <- dia_tbl %>%
+  filter(term != "(Intercept)")
+
+# ggplot of regression
+dia_hard <- ggplot(dia_tbl, aes(x = term, y = estimate)) +
+  geom_pointrange(aes( ymin = conf.low, ymax = conf.high)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "#e03000") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Regression Coefficient with 95% CI",
+       y = "Estimate",
+       x = "Term")
+
+# plot interactive
+ggplotly(dia_hard) %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+### Diabetes Mismatch Index
+
+``` {r diabetes residuals}
+# residual tooltip
+chicago_map <- chicago_map %>%
+  filter(!is.na(diabetes_rate)) %>%
+  mutate(
+    tooltip_text = paste0(
+      "<b>", community, "</b><br>",
+      "Diabetes Rate: ", round(diabetes_rate, 1), "%<br>",
+      "Predicted: ", round(diabetes_rate - residual, 1), "%<br>",
+      "Residual: ", round(residual, 1)
+    )
+  )
+
+diabetes_resid <- ggplot(chicago_map) +
+  geom_sf(aes(fill = residual, text = tooltip_text)) +
+  scale_fill_gradient2(
+    low = "#48bea1", mid = "white", high = "#7b4419",
+    midpoint = 0, name = "Residual"
+  ) +
+  theme_minimal() +
+  labs(title = "Diabetes Mismatch Index",
+       subtitle = "Dark gray = worse than expected | Red = better than expected")
+
+ggplotly(diabetes_resid, tooltip = "text") %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+## Row {data-height="120"}
+
+### Resilient Neighborhoods
+
+```{r}
+n_resilient <- sum(chicago_map$resilient_dia == TRUE, na.rm = TRUE)
+valueBox(
+  value = n_resilient,
+  caption = "Resilient Neighborhoods",
+  icon = "fa-shield",
+  color = "#48bea1"
+)
+```
+
+### Vulnerable Neighborhoods
+
+```{r}
+n_vulnerable <- sum(chicago_map$vulnerable_dia == TRUE, na.rm = TRUE)
+valueBox(
+  value = n_vulnerable,
+  caption = "Vulnerable Neighborhoods",
+  icon = "fa-triangle-exclamation",
+  color = "#7b4419"
+)
+```
+
+### Neighborhoods Outside Expected Pattern
+
+```{r}
+n_mismatch <- sum(chicago_map$resilient_dia == TRUE | chicago_map$vulnerable_dia == TRUE, na.rm = TRUE)
+valueBox(
+  value = n_mismatch,
+  caption = "Neighborhoods Outside Expected Pattern",
+  icon = "fa-shuffle",
+  color = "#a7e831"
+)
+```
+
+### Variance in Diabetes Explained by Hardship
+
+```{r}
+valueBox(
+  value = "39%",
+  caption = "Variance in Diabetes Explained by Hardship",
+  icon = "fa-chart-line",
+  color = "#167b2b"
+)
+```
+
+## Row {data-height="450"}
+
+### Neighborhoods of Vulnerability and Resilience
+
+```{r mismatch scatterplot}
+scatter_mismatch <- ggplot(chicago_map, aes(x = hard_index, y = disease_burden,
+                                             color = category_dia,
+                                             text = paste0("<b>", community, "</b><br>",
+                                                           "Hardship: ", round(hard_index, 1), "<br>",
+                                                           "Disease Burden: ", round(disease_burden, 1), "%<br>",
+                                                           category_dia))) +
+  geom_point(size = 3) +
+  geom_vline(xintercept = median(chicago_map$hard_index, na.rm = TRUE), 
+             linetype = "dashed", color = "grey50") +
+  geom_hline(yintercept = median(chicago_map$disease_burden, na.rm = TRUE), 
+             linetype = "dashed", color = "grey50") +
+  scale_color_manual(values = c("Resilient" = "#48bea1", 
+                                "Vulnerable" = "#D10300", 
+                                "Expected" = "grey70")) +
+  labs(x = "Hardship Index", y = "Disease Burden (%)", color = NULL) +
+  theme_minimal()
+
+ggplotly(scatter_mismatch, tooltip = "text") %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
+
+### Diabetes-Specific Vulnerability and Resilience
+
+``` {r scatterplot of diabetes vs hardship}
+scatter_diabetes <- ggplot(chicago_map, aes(x = hard_index, y = diabetes_rate,
+                                             color = category_dia,
+                                             text = paste0("<b>", community, "</b><br>",
+                                                           "Hardship: ", round(hard_index, 1), "<br>",
+                                                           "Diabetes Rate: ", round(diabetes_rate, 1), "%<br>",
+                                                           category_dia))) +
+  geom_point(size = 3) +
+  geom_vline(xintercept = median(chicago_map$hard_index, na.rm = TRUE), 
+             linetype = "dashed", color = "grey50") +
+  geom_hline(yintercept = median(chicago_map$diabetes_rate, na.rm = TRUE), 
+             linetype = "dashed", color = "grey50") +
+  scale_color_manual(values = c("Resilient" = "#48bea1", 
+                                "Vulnerable" = "#7b4419", 
+                                "Expected" = "grey70")) +
+  scale_x_discrete(limits = rev) +
+  labs(x = "Hardship Index", y = "Diabetes Rate (%)", color = NULL) +
+  theme_minimal()
+
+ggplotly(scatter_diabetes, tooltip = "text") %>%
+  layout(autosize = TRUE) %>%
+  config(displayModeBar = FALSE)
+```
