@@ -23,27 +23,31 @@ theme:
 
 #Note: This runs first and prepares the environment.
 #Note: We suppress warnings/messages for a clean dashboard.
-
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 
-#Note: Core libraries for data manipulation and visualization
+#Note: Core libraries for data manipulation and visualization.
 library(tidyverse)
 library(plotly)
 library(flexdashboard)
 library(DT)
 library(leaflet)
-library(readr)
-library(dplyr)
 library(janitor)
 library(scales)
 
-#Note: SUNSET COLOR PALETTE
-#Note: Consistent colors across all visuals improves readability and professionalism
-sun_orange <- "#FF7A00"
-sun_yellow <- "#FFC300"
-sun_red    <- "#FF3B3B"
-sun_pink   <- "#FF8FA3"
-dark_gray  <- "#2F2F2F"
+
+#Note: Sunset color palette used across visuals.
+sun_yellow <- "#FFC857"
+sun_orange <- "#F77F00"
+sunset_red <- "#D62828"
+deep_blue <- "#003049"
+soft_cream <- "#FCBF49"
+sun_red <- "#D62828"
+dark_gray <- "#4A4A4A"
+sun_pink <- "#E5989B"
+
+#Note: Load project datasets using the exact filenames in the project folder.
+health_data <- readr::read_csv("Chi_Health_Atlas_Data.csv")
+dict_data <- readr::read_csv("CHA_Data_Dictionary(1).csv")
 ```
 
 
@@ -102,21 +106,13 @@ By combining environmental, demographic, and health data, this project aims to r
 
 
 
-# Data Preparation  (Obesity)
+# Social Detriments of Health 
 
 
 
-
-
-
-
-
-
-
-==
 Hypertension is used as a central indicator because it reflects long-term exposure to both environmental and structural conditions, making it a powerful measure of inequality across space.
 
-# Data Preparation (hypertension)
+# Health Outcomes based on Particulate Matter: Hypertension
 
 ```{r load-data}
 
@@ -124,54 +120,38 @@ Hypertension is used as a central indicator because it reflects long-term exposu
 
 health_data <- read_csv("Chi_Health_Atlas_Data(1).csv")
 
-poverty_data <- read_csv("Chicago Health Atlas Data Download - Census Tracts (2).csv")
+poverty_data <- read_csv("Chi_Health_Atlas_Data.csv")
 ```
-
 
 ```{r clean-data}
-#Note: I selected only the variables needed for analysis.
-#Note: This reduces errors and keeps the data set focused.
+#Note: Clean and rename key variables for easier interpretation.
 
-analysis_df <- health_data %>%
-  select(
+clean_data <- health_data %>%
+  transmute(
     community = Name,
+    population = Population,
+    asthma = `HCSATH_2023-2024`,
+    poverty = PMC_2020,
+    median_income = `CHARIPZ_2023-2024`,
     lat = Latitude,
     lon = Longitude,
-    hypertension = `HCSHYT_2023-2024`,
-    pm25 = `PMC_2020`,
-    population = `POP_2020-2024`
-  ) %>%
-  mutate(community = toupper(str_trim(community)))
+    pm25 = CHAKNKC_2023
+  )
 
-#Note: Cleaned poverty data for merging
-poverty_data <- poverty_data %>%
-  select(
-    community = Name,
-    poverty_rate = `POV_2020-2024`
-  ) %>%
-  mutate(community = toupper(str_trim(community)))
-
-#Note: Joined data sets
-analysis_df <- analysis_df %>%
-  left_join(poverty_data, by = "community")
-
-#Note: Ensured poverty is numeric (prevents plotting errors)
-analysis_df$poverty_rate <- readr::parse_number(analysis_df$poverty_rate)
+#Note: Keep compatibility with previous code.
+analysis_df <- clean_data
 ```
-
-
-# Environmental Exposure
-
-ANALYSIS
+  
+### INTRODUCTION
 
 PM2.5 exposure across Chicago demonstrates clear clusters of elevated pollution levels across specific neighborhoods. These areas represent communities that are consistently subjected to higher environmental risk, which can contribute to long-term health consequences. The non-random distribution of pollution suggests that environmental burden is structurally embedded within the urban landscape. This pattern raises important concerns about environmental justice and unequal exposure. On average, a PM2.5 of around 9.2 suggests moderate air quality across neighborhoods in Chicago; however a slight health risk is present for individuals sensitive to pollutants and prone to having chronic diseases. Establishing this baseline is critical for interpreting how environmental conditions shape health outcomes.
 
-
+## Figure 1
 ```{r pm25_map}
 #Note: This PM2.5 map establishes environmental risk baseline
 
 pm_df <- analysis_df %>%
-  filter(!is.na(lat), !is.na(lon), !is.na(pm25))
+  filter(!is.na(lat), !is.na(lon))
 
 plot_ly(
   pm_df,
@@ -203,20 +183,18 @@ layout(
 ```
 
 
-# Hypertension Analysis (spatial distribution)
-
-ANALYSIS
+### ANALYSIS
 
 Hypertension exhibits strong spatial clustering across Chicago, with certain neighborhoods consistently experiencing higher rates than others such as the community in Austin with 27,500 cases recorded compared to Riverdale with 2000 recorded cases. This pattern suggests that health outcomes are shaped by localized structural conditions rather than random variation. The persistence of these clusters indicate long-term exposure to risk factors such as economic stress and limited access to healthcare. Not all high-risk areas align perfectly with pollution patterns, pointing to additional underlying influences. This reinforces the importance of area-based analysis in understanding health disparities.
 
-
-```{r mapbox-hypertension}
+## Figure 2
+```{r mapbox-asthma}
 #Note:It uses Plotly's Mapbox engine for smooth zooming and better aesthetics.
 
 #Note: IMPORTANT:
 #Note: filtered only necessary variables to avoid NA issues
 map_df <- analysis_df %>%
-  filter(!is.na(lat), !is.na(lon), !is.na(hypertension))
+  filter(!is.na(lat), !is.na(lon), !is.na(asthma))
 
 #Note: Create interactive map
 plot_ly(
@@ -229,7 +207,7 @@ plot_ly(
   #Note: Color encodes hypertension intensity
   marker = list(
     size = 10,
-    color = ~hypertension,
+    color = ~asthma,
     colorscale = list(
       c(0, "#FFC300"),   # yellow
       c(0.5, "#FF7A00"), # orange
@@ -242,7 +220,7 @@ plot_ly(
   #Note: Tooltip info
   text = ~paste(
     "Community:", community,
-    "<br>Hypertension:", round(hypertension, 2)
+    "<br>asthma:", round(asthma, 2)
   ),
   hoverinfo = "text"
 ) %>%
@@ -258,19 +236,19 @@ layout(
 ```
 
 
-# Pollution Relationship
-
-ANALYSIS
+### ANALYSIS
 
 The relationship between PM2.5 and hypertension shows a general downward trend when observing PM2.5 of 8 to 9.8, indicating that environmental exposure does slightly contribute to health risk. However, the variability around the trend line suggests that this relationship is not significant and realistic. Some neighborhoods experience higher-than-expected hypertension despite lower pollution levels. This indicates that additional structural or social factors are influencing outcomes. The results highlight the limitations of relying solely on environmental variables to explain health disparities.
 
+## Figure 3
 ```{r pollution-scatter}
+
 #Note: This tests the expected environmental relationship.
 
 scatter_df <- analysis_df %>%
-  filter(!is.na(pm25), !is.na(hypertension))
+  filter(!is.na(pm25), !is.na(asthma))
 
-p <- ggplot(scatter_df, aes(pm25, hypertension)) +
+p <- ggplot(scatter_df, aes(pm25, asthma)) +
   geom_point(color = sun_orange, alpha = 0.7) +
   geom_smooth(method = "lm", color = sun_red) +
   theme_minimal()
@@ -279,24 +257,21 @@ ggplotly(p)
 ```
 
 
-# Mismatch Data
-
-ANALYSIS
-
-The mismatch index highlights where observed hypertension diverges from expected patterns based on environmental and demographic factors. These deviations are spatially clustered, indicating localized influences that are beyond pollution. Areas with high mismatch values may experience structural disadvantages that can amplify and be prone to health risk. Conversely, lower-than-expected values suggest the presence of protective community factors across the city of Chicago. This approach can help provide a deeper understanding of inequality by identifying where standard explanations fall short.
-
 
 ```{r mismatch}
 #Note: Residuals capture deviation from expected outcomes.
+#Note: Predicted asthma is based on pm25 and population.
 
-model <- lm(hypertension ~ pm25 + population, data = analysis_df)
+model <- lm(asthma ~ pm25 + population, data = analysis_df)
 
 analysis_df <- analysis_df %>%
-  mutate(mismatch_index = resid(model))
-
+  mutate(
+    predicted_asthma = predict(model, newdata = analysis_df),
+    mismatch_index = asthma - predicted_asthma
+  )
 ```
 
-
+## Figure 4
 ```{r mismatch-map}
 #Note: plot is not that detailed. not how I would like to showcase the data but came across issues and decided to leave this plot as final product.
 
@@ -314,31 +289,14 @@ plot_ly(
 )
 ```
 
+### ANALYSIS
 
-# Conclusion
-Hypertension across Chicago is shaped by both environmental exposure and structural inequality. While pollution contributes to risk, it does not fully explain the observed variation.
+The mismatch index highlights where observed hypertension diverges from expected patterns based on environmental and demographic factors. These deviations are spatially clustered, indicating localized influences that are beyond pollution. Areas with high mismatch values may experience structural disadvantages that can amplify and be prone to health risk. Conversely, lower-than-expected values suggest the presence of protective community factors across the city of Chicago. This approach can help provide a deeper understanding of inequality by identifying where standard explanations fall short.
 
-The mismatch framework reveals that health outcomes are influenced by a broader set of factors, including socioeconomic conditions and neighborhood context. These findings emphasize the need for comprehensive approaches to public health. 
-
-
-# Future Directions
-
-Future work can expand this analysis by incorporating additional variables such as access to healthcare, green space, and community-level trust.
-
-Temporal analysis could reveal how these relationships evolve over time. More advanced spatial models may also better capture neighborhood-level effects.
-
-Understanding these dynamics more deeply can help design targeted interventions that address both environmental and structural drivers of health inequality.
-
-=====
-
-# Abstract (Asthma)
-
-**Introduction: This research aims to explore weather traffic pollution disproportionately affects some Chicago neighborhoods more than others. According to the American Lung Association previous findings have revealed there are correlations between air quality/pollution and health outcomes in the city of Chicago, predominantly affecting densely populated, disadvantaged areas. Based on this research, we hypothesize neighborhoods with higher levels of environmental burden will be more prone to higher asthma levels.**
-
-**Methods: Descriptive analysis was used in order to conduct data exploration research on Chicago pollution metrics and their correlation to health outcomes. Data from the Chicago Health Atlas and Chicago Housing Authority was used in order to create four figures using R Studio, packages include: ggplot, tidyverse, janitor, and plotly. Figures used included a leaflet map, mismatch graph, standard plot and environmental burden plot. Graph interpretation was used in order to conduct results.**
-
-
-# Data Preparation (Asthma)
+# Health Outcomes based on Traffic Pollution: Asthma
+##
+### INTRODUCTION:
+This research aims to explore weather traffic pollution disproportionately affects some Chicago neighborhoods more than others. According to the American Lung Association previous findings have revealed there are correlations between air quality/pollution and health outcomes in the city of Chicago, predominantly affecting densely populated, disadvantaged areas. Based on this research, we hypothesize neighborhoods with higher levels of environmental burden will be more prone to higher asthma levels.Descriptive analysis was used in order to conduct data exploration research on Chicago pollution metrics and their correlation to health outcomes. Data from the Chicago Health Atlas and Chicago Housing Authority was used in order to create four figures using R Studio, packages include: ggplot, tidyverse, janitor, and plotly. Figures used included a leaflet map, mismatch graph, standard plot and environmental burden plot. Graph interpretation was used in order to conduct results.
 ```{r}
 #Note: Loaded data.
 health_data <- read_csv("Chi_Health_Atlas_Data.csv") %>%
@@ -351,14 +309,9 @@ asthma_plot <- health_data %>%
     pollution = trf_2020
   )
 ```
-
-
-# Figure 1: Leaflet Map of Asthma Burden of Chicago
-
-
-
-**The leaflet map sets the baseline data that shows where asthma is distributed in the city. This map is interactive and represents the prevalence of asthma in 72 Chicago neighborhoods. Asthma concentration is represented in large yellow circles which decrease in size and gradience from dark green (greater concentrations) to light green (lower concentrations). Viewers can zoom into specific neighborhoods and hover over them to reveal neighborhood name, asthma prevalence and traffic pollution levels. This map helps us identify spatial distribution of asthma throughout the city. It also helps us identify weather there is a correlation among pollution and asthma for specific neighborhoods. The map shows us asthma levels have a relatively even distribution in the city of Chicago with some higher concentrations on the northside such as Lakeview and Albany Park. However, there is no clear relationship between traffic pollution and asthma prevalence as these factors vary throughout neighborhoods.** 
-
+###**Figure 1: Leaflet Map of Asthma Burden of Chicago**
+The leaflet map sets the baseline data that shows where asthma is distributed in the city. This map is interactive and represents the prevalence of asthma in 72 Chicago neighborhoods. Asthma concentration is represented in large yellow circles which decrease in size and gradience from dark green (greater concentrations) to light green (lower concentrations). Viewers can zoom into specific neighborhoods and hover over them to reveal neighborhood name, asthma prevalence and traffic pollution levels. This map helps us identify spatial distribution of asthma throughout the city. It also helps us identify weather there is a correlation among pollution and asthma for specific neighborhoods. The map shows us asthma levels have a relatively even distribution in the city of Chicago with some higher concentrations on the northside such as Lakeview and Albany Park. However, there is no clear relationship between traffic pollution and asthma prevalence as these factors vary throughout neighborhoods.
+##
 ```{r}
 #Note: Loaded data and cleaned it.
 health_data <- read_csv("Chi_Health_Atlas_Data.csv") %>%
@@ -413,17 +366,7 @@ leaflet(map_data) %>%
   )
 ```
 
-
-# Figure 2: Mismatch Graph of Pollution Risk
-
-
-
-**Descrption: This graph was created in order to compare the expected health outcomes for 77 Chicago neighborhoods based on the environmental pollution outcomes to real asthma levels. Expected Asthma levels were showcased using the traffic burden data set on top where lime green represents positive values (>0) that matched expected outcomes. The bottom showcases resilient neighborhoods that did not match expected outcomes in the negative value range (<0) in dark green. Grey circles represent exactly where outcomes match expectations. The tooltip function helps the viewer see data on individual plot points. This is helpful due to our large data set. By hovering over each point, the viewer is able to directly verify the mismatch and confirm information.**
-
-**Analysis :The graph suggests health outcomes for asthma are have a low-moderate correlation to traffic related pollution as there is a general positive trend with a few positive outliers such as Lakeview and Austin. However, there is variability in the dataset which could mean multiple factors contribute to asthma outcomes.**
-
-
-
+##
 ```{r, fig.height=20, fig.width=12}
 
 
@@ -521,17 +464,11 @@ theme(
 ggplotly(p, tooltip = "text")
 
 ```
+### Figure 2: Mismatch Graph of Pollution Risk
+**Description: This graph was created in order to compare the expected health outcomes for 77 Chicago neighborhoods based on the environmental pollution outcomes to real asthma levels. Expected Asthma levels were showcased using the traffic burden data set on top where lime green represents positive values (>0) that matched expected outcomes. The bottom showcases resilient neighborhoods that did not match expected outcomes in the negative value range (<0) in dark green. Grey circles represent exactly where outcomes match expectations. The tooltip function helps the viewer see data on individual plot points. This is helpful due to our large data set. By hovering over each point, the viewer is able to directly verify the mismatch and confirm information.**
+Analysis :The graph suggests health outcomes for asthma are have a low-moderate correlation to traffic related pollution as there is a general positive trend with a few positive outliers such as Lakeview and Austin. However, there is variability in the dataset which could mean multiple factors contribute to asthma outcomes.**
 
-
-# Figure 3: Standard Scatter Plot of Asthama vs Traffic Pollution
-
-
-
-**Description: The graph demonstrates the relationship between traffic-related pollution and prevalence of asthma across 77 Chicago neighborhoods. The x-axis represents traffic-related pollution and the y-axis represents the percentage of adults with asthma (prevalence). The color gradient increases in hue to a darker green in correlation to higher pollution levels. The dashed lines represent city averages which divide the plot into four quadrants. Each plot point represents a specific Chicago neighborhood and a tooltip feature was used in order to showcase interactivity. Each plot point tells the viewer what neighborhood they are looking at, as well as the asthma and pollution levels.**
-
-**Analysis: Overall, there is a general positive relationship in the data as plot points are scattered at an upwards direction, suggesting pollution could contribute to asthma levels. However, plot-points do not emphasize a linear relationship and are scattered, meaning there could be other contributing factors to asthma levels. Furthermore, the quadrants on the graph help reveal patterns, the top right quadrant show expected burden. The top left, unexpected vulnerability, bottom right: resilience and bottom left: highest resilience. Some outliers are observed but there is no clear pattern. In conclusion, the graph helps the viewer see vulnerability patterns beyond environmental exposure.**
-
-
+##
 ```{r}
 #Note: Loaded the data set and cleaned column names using the janitor package. 
 health_data <- read_csv("Chi_Health_Atlas_Data.csv") %>%
@@ -597,15 +534,11 @@ p <- ggplot(
 ggplotly(p, tooltip = "text")
 ```
 
+### Figure 3: Standard Scatter Plot of Asthama vs Traffic Pollution
+**Description: The graph demonstrates the relationship between traffic-related pollution and prevalence of asthma across 77 Chicago neighborhoods. The x-axis represents traffic-related pollution and the y-axis represents the percentage of adults with asthma (prevalence). The color gradient increases in hue to a darker green in correlation to higher pollution levels. The dashed lines represent city averages which divide the plot into four quadrants. Each plot point represents a specific Chicago neighborhood and a tooltip feature was used in order to showcase interactivity. Each plot point tells the viewer what neighborhood they are looking at, as well as the asthma and pollution levels.
+Analysis: Overall, there is a general positive relationship in the data as plot points are scattered at an upwards direction, suggesting pollution could contribute to asthma levels. However, plot-points do not emphasize a linear relationship and are scattered, meaning there could be other contributing factors to asthma levels. Furthermore, the quadrants on the graph help reveal patterns, the top right quadrant show expected burden. The top left, unexpected vulnerability, bottom right: resilience and bottom left: highest resilience. Some outliers are observed but there is no clear pattern. In conclusion, the graph helps the viewer see vulnerability patterns beyond environmental exposure.**
 
-# Figure 4: Environmental Justice Burden Plot
-
-
-**Description: The graph showcases the relationship between the environmental justice burden of asthma and asthma mismatch rates. The graph plots environmental justice burden and asthma on the x-axis and asthma mismatch on the y-axis. Asthma mismatch is determined by actual minus expected asthma levels based on traffic pollution. The graph aims to explore weather certain neighborhoods are vulnerable and disproportionately affected by asthma. Neighborhoods over the dotted line (0>) have a higher than expected asthma level despite traffic pollution. Neighborhoods under the dotted line (<0) more resilient than expected asthma rates. The graph also includes an interactive feature that allows the viewer to hover over a specific neighborhood to see neighborhood name, environmental justice burden, mismatch score, asthma prevalence and pollution levels.** 
-
-**Analysis: This graph suggests a slight positive relationship between higher levels of EJ burden and positive mismatch yields. However, variability still exists in the graph and distribution appears mostly even. It is possible, neighborhood plays a role into asthma levels.**
-
-
+##
 ```{r}
 #Note: Loaded and cleaned data set.
 health_data <- read_csv("Chi_Health_Atlas_Data.csv") %>%
@@ -685,11 +618,27 @@ p <- ggplot(plot_data,
 #Note: Converted to interactive by incorporating a tooltip.
 ggplotly(p, tooltip = "text")
 ```
+### Figure 4: Environmental Justice Burden Plot
+**Description: The graph showcases the relationship between the environmental justice burden of asthma and asthma mismatch rates. The graph plots environmental justice burden and asthma on the x-axis and asthma mismatch on the y-axis. Asthma mismatch is determined by actual minus expected asthma levels based on traffic pollution. The graph aims to explore weather certain neighborhoods are vulnerable and disproportionately affected by asthma. Neighborhoods over the dotted line (0>) have a higher than expected asthma level despite traffic pollution. Neighborhoods under the dotted line (<0) more resilient than expected asthma rates. The graph also includes an interactive feature that allows the viewer to hover over a specific neighborhood to see neighborhood name, environmental justice burden, mismatch score, asthma prevalence and pollution levels.** 
+Analysis: This graph suggests a slight positive relationship between higher levels of EJ burden and positive mismatch yields. However, variability still exists in the graph and distribution appears mostly even. It is possible, neighborhood plays a role into asthma levels.**
 
-
-
-# Conclusion
-
+## Conclusion
 **Overall, I wanted to show the relationship between pollution and asthma levels. I aimed to explore weather asthma cases were higher based on traffic pollution and how these rates affect environmental burden. My first graph is a leaflet map that showcases asthma prevalence in the Chicagoland area. This figure showed some higher concentrations of asthma in the northern region, however these differences were not significant. I made this map to establish baseline levels of asthma prevalence throughout the city. The second figure was a mismatch graph made to see weather certain neighborhoods experience higher or lower expected levels of asthama based on traffic pollution. The findings revealed the same neighborhoods with higher levels of asthma on figure 1 were the same neighborhoods with more vulerability than expected: Lakeview, Austin, Albany Park. There was a slight positive correlation between asthma levels and pollution with some variability. Figure 3 is a scatter plot with dashed lines that indicate city-averages between traffic-related pollution and asthma prevalence. This figure shows weather asthma tends to increase as pollution increases to establish a baseline relationship between the two variables. Findings reveal the same outliers as previous figures have higher asthma levels than pollution levels. This suggests pollution does not fully explain asthma outcomes. The final figure (4) attempts to uncover weather environmental justice predicts weather a neighborhood will have higher or lower asthma levels than expected. The findings reveal there is no strong pattern between the two variables as points are widely scattered with a few outliers. For example the neighborhood of Lakeview has low environmental justice burden but a high positive mismatch, the neighborhood of Austin has a high environmental burden, and high positive mismatch. These random variations reveal no real pattern between the two. In conclusion, there is no real correlation between asthma traffic pollution and asthma levels. However, there are a few neighborhoods that are disproportionately affected for unknown reasons which could be potentially attributed to traffic pollution. The results suggest further analyses needs to be conducted in order to reveal asthma causation.** 
 
+# Health Outcomes based on Pollution: Obesity
 
+# Conclusion
+Hypertension across Chicago is shaped by both environmental exposure and structural inequality. While pollution contributes to risk, it does not fully explain the observed variation.
+
+The mismatch framework reveals that health outcomes are influenced by a broader set of factors, including socioeconomic conditions and neighborhood context. These findings emphasize the need for comprehensive approaches to public health. 
+
+
+# Future Directions
+
+Future work can expand this analysis by incorporating additional variables such as access to healthcare, green space, and community-level trust.
+
+Temporal analysis could reveal how these relationships evolve over time. More advanced spatial models may also better capture neighborhood-level effects.
+
+Understanding these dynamics more deeply can help design targeted interventions that address both environmental and structural drivers of health inequality.
+
+=====
